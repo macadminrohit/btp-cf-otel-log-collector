@@ -1,0 +1,65 @@
+# OPT-IN overlay: Cloud Foundry container metrics -> Splunk Observability Cloud.
+#
+# It is merged on top of config.yaml by passing both files:
+#   ./otelcol-contrib --config=config.yaml --config=config.cf-metrics.yaml
+# It only ADDS a `metrics` pipeline. The `logs` pipeline in config.yaml is untouched.
+# To switch it off, go back to the single-file command in manifest.yml.
+#
+# WARNING: the cloud_foundry receiver terminates the whole Collector process if it cannot log in to
+# the UAA (wrong/revoked client, UAA unreachable at start). With this overlay enabled, that would
+# also stop log forwarding. Set the credentials below BEFORE changing the start command, and watch
+# `cf logs otel-log-collector --recent` after the restart.
+#
+# Required environment (set with `cf set-env`, never written to a file):
+#   CF_RLP_GATEWAY_ENDPOINT   RLP gateway of the landscape, e.g. https://log-stream.cf.<region>.hana.ondemand.com
+#   CF_UAA_ENDPOINT           platform UAA, e.g. https://uaa.cf.<region>.hana.ondemand.com
+#   CF_UAA_CLIENT_ID          UAA client with authority logs.admin (grant type client_credentials)
+#   CF_UAA_CLIENT_SECRET      that client's secret
+#   SPLUNK_O11Y_REALM         e.g. us1
+#   SPLUNK_O11Y_ACCESS_TOKEN  Splunk Observability Cloud org access token (ingest scope)
+# Optional: CF_RLP_SHARD_ID (default btp-otel-metrics), DEPLOYMENT_ENVIRONMENT (already used by config.yaml)
+
+receivers:
+  cloud_foundry:
+    rlp_gateway:
+      endpoint: ${env:CF_RLP_GATEWAY_ENDPOINT}
+      # Collectors that share a shard_id split the stream between them (each envelope goes to one
+      # of them: no duplicates, no loss). So running 2 instances of this app is fine. Give a
+      # DIFFERENT shard_id to any other collector that reads this landscape, or it would get a
+      # duplicate copy of the metrics.
+      shard_id: ${env:CF_RLP_SHARD_ID:-btp-otel-metrics}
+      tls:
+        insecure_skip_verify: false
+    uaa:
+      endpoint: ${env:CF_UAA_ENDPOINT}
+      username: ${env:CF_UAA_CLIENT_ID}
+      password: ${env:CF_UAA_CLIENT_SECRET}
+      tls:
+        insecure_skip_verify: false
+
+processors:
+  resource/cf_metrics_env:
+    attributes:
+      - key: deployment.environment.name
+        value: ${env:DEPLOYMENT_ENVIRONMENT:-btp-trial}
+        action: insert
+
+exporters:
+  otlp_http/splunk_o11y:
+    # OTLP/HTTP path of Splunk Observability Cloud (not the native /v2/datapoint API).
+    metrics_endpoint: https://ingest.${env:SPLUNK_O11Y_REALM}.observability.splunkcloud.com/v2/datapoint/otlp
+    headers:
+      X-SF-Token: ${env:SPLUNK_O11Y_ACCESS_TOKEN}
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  pipelines:
+    metrics:
+      receivers: [cloud_foundry]
+      processors: [memory_limiter, resource/cf_metrics_env, batch]
+      exporters: [otlp_http/splunk_o11y]
