@@ -1,0 +1,6 @@
+.dl/
+*.sh
+*.ps1
+*.md
+vars*.yml
+.gitignore

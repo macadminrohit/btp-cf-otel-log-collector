@@ -1,0 +1,37 @@
+---
+# Parameterised so the same file works on any foundation:
+#
+#   cf push -f manifest.yml --vars-file vars-<target>.yml --no-start
+#
+# Variables (see vars.example.yml):
+#   app_name  name of the collector app
+#   route     full route, e.g. otel-log-collector-<org>.cfapps.<region>.hana.ondemand.com
+applications:
+  - name: ((app_name))
+
+    # Run ./fetch.sh first: it downloads a pinned otelcol-contrib, verifies its
+    # sha256 and places it here. The binary is ~400 MB and is not committed.
+    path: .
+    buildpacks:
+      - binary_buildpack
+
+    # chmod first: a push from Windows does not carry Unix mode bits, so do not
+    # rely on the file arriving executable. Harmless when it already is.
+    command: chmod +x ./otelcol-contrib && exec ./otelcol-contrib --config=config.yaml
+
+    # Two instances is the minimum that survives a platform cell restart without
+    # dropping log export. Trial runs one.
+    instances: 1
+    memory: 512M
+    disk_quota: 1G
+
+    # The OTLP endpoint answers 4xx to a bare GET, so an http health check would
+    # mark a healthy collector as failed.
+    health-check-type: process
+
+    routes:
+      - route: ((route))
+
+    # No env block on purpose. Secrets are set with set-secrets.sh (cf set-env)
+    # and never written to the repo:
+    #   OTLP_INGEST_TOKEN, SPLUNK_HEC_URL, SPLUNK_HEC_TOKEN, SPLUNK_HEC_INDEX

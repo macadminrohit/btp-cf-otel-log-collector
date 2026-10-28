@@ -1,0 +1,3 @@
+# Copy to vars-<target>.yml and edit. Nothing in here is secret.
+app_name: otel-log-collector
+route: otel-log-collector-<org-suffix>.cfapps.<region>.hana.ondemand.com

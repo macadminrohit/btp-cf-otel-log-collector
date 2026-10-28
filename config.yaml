@@ -1,0 +1,93 @@
+# Shared log collector for SAP BTP Cloud Foundry, run as ONE Cloud Foundry app.
+#
+#   Java apps (Splunk OTel agent)  --OTLP/HTTP + bearer token-->  this app
+#   this app                       --HEC-->                       Splunk Cloud
+#
+# Why OTLP/HTTP and not syslog-tls: an HTTP route on cfapps.* is terminated by
+# the platform's own certificate, so there is no certificate for us to obtain,
+# rotate or get refused. A syslog-tls:// drain needs a TCP route and a CA-trusted
+# cert for a hostname we do not own.
+#
+# Every credential comes from the environment (cf set-env). Nothing secret is
+# in this file. Required variables:
+#   PORT               set by Cloud Foundry; the route forwards here
+#   OTLP_INGEST_TOKEN  bearer token apps must present to send logs here
+#   SPLUNK_HEC_URL     https://<hec-host>/services/collector
+#   SPLUNK_HEC_TOKEN   HEC token
+# Optional (defaults after ":-"):
+#   SPLUNK_HEC_INDEX, SPLUNK_HEC_SOURCETYPE, SPLUNK_HEC_SOURCE,
+#   DEPLOYMENT_ENVIRONMENT, DEBUG_VERBOSITY
+
+extensions:
+  # Rejects OTLP requests that lack "Authorization: Bearer <token>". The route is
+  # public (BTP has no container-to-container networking), so without this anyone
+  # could write into the Splunk index.
+  bearertokenauth/ingest:
+    scheme: Bearer
+    token: ${env:OTLP_INGEST_TOKEN}
+
+receivers:
+  otlp:
+    protocols:
+      # HTTP only. The gorouter does not carry gRPC on a default route.
+      http:
+        endpoint: 0.0.0.0:${env:PORT}
+        auth:
+          authenticator: bearertokenauth/ingest
+
+processors:
+  # Guard rail: a log burst must not OOM the collector. Keep it first.
+  memory_limiter:
+    check_interval: 2s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+  # insert, not upsert: the app's own deployment.environment.name wins. This is
+  # only a fallback for apps that did not set one.
+  resource/defaults:
+    attributes:
+      - key: deployment.environment.name
+        value: ${env:DEPLOYMENT_ENVIRONMENT:-btp-trial}
+        action: insert
+
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+exporters:
+  splunk_hec:
+    token: ${env:SPLUNK_HEC_TOKEN}
+    endpoint: ${env:SPLUNK_HEC_URL}
+    index: ${env:SPLUNK_HEC_INDEX:-sap_btp}
+    source: ${env:SPLUNK_HEC_SOURCE:-btp:cf:otlp}
+    sourcetype: ${env:SPLUNK_HEC_SOURCETYPE:-btp:cf:app}
+    # Attribute names that, when present on a record, override the metadata above.
+    # Defaults are com.splunk.source / .sourcetype / .index / host.name.
+    otel_attrs_to_hec_metadata:
+      host: host.name
+    tls:
+      insecure_skip_verify: false
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+  # basic = one line per batch. Set DEBUG_VERBOSITY=detailed to print every
+  # record, which is how we capture the proof event. Detailed output contains
+  # log bodies, so use it briefly.
+  debug:
+    verbosity: ${env:DEBUG_VERBOSITY:-basic}
+
+service:
+  extensions: [bearertokenauth/ingest]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/defaults, batch]
+      exporters: [splunk_hec, debug]
