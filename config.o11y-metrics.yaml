@@ -1,0 +1,38 @@
+# OPT-IN overlay: forward OTLP METRICS received by this collector to Splunk Observability Cloud.
+#
+# Use case: the sap-cf-metrics-exporter app pushes Cloud Foundry container metrics (CPU, memory,
+# disk, ...) to this collector's existing OTLP/HTTP route, with the same bearer token the apps use
+# for logs. No UAA client and no extra permissions are involved.
+#
+# Merged on top of config.yaml by passing both files:
+#   ./otelcol-contrib --config=config.yaml --config=config.o11y-metrics.yaml
+# It only ADDS a `metrics` pipeline that reuses the `otlp` receiver, `memory_limiter` and `batch`
+# already defined in config.yaml. The `logs` pipeline is untouched. To switch it off, go back to
+# the single-file start command in manifest.yml.
+#
+# Any OTLP metrics that other apps send to this collector are forwarded too (on purpose: one
+# collector, one path). Remove this overlay if that is not wanted.
+#
+# Required environment (cf set-env; never written to a file):
+#   SPLUNK_O11Y_REALM         e.g. us1
+#   SPLUNK_O11Y_ACCESS_TOKEN  Splunk Observability Cloud org access token (ingest scope)
+
+exporters:
+  otlp_http/splunk_o11y:
+    # OTLP/HTTP path of Splunk Observability Cloud (not the native /v2/datapoint API).
+    metrics_endpoint: https://ingest.${env:SPLUNK_O11Y_REALM}.observability.splunkcloud.com/v2/datapoint/otlp
+    headers:
+      X-SF-Token: ${env:SPLUNK_O11Y_ACCESS_TOKEN}
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/splunk_o11y]

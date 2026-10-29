@@ -17,7 +17,9 @@ applications:
 
     # chmod first: a push from Windows does not carry Unix mode bits, so do not
     # rely on the file arriving executable. Harmless when it already is.
-    command: chmod +x ./otelcol-contrib && exec ./otelcol-contrib --config=config.yaml
+    # OTEL_EXTRA_CONFIG (cf set-env) optionally adds an overlay file, e.g. config.o11y-metrics.yaml.
+    # Unset = logs only, exactly as before.
+    command: chmod +x ./otelcol-contrib && exec ./otelcol-contrib --config=config.yaml ${OTEL_EXTRA_CONFIG:+--config=${OTEL_EXTRA_CONFIG}}
 
     # Two instances is the minimum that survives a platform cell restart without
     # dropping log export. Trial runs one.
