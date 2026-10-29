@@ -44,17 +44,21 @@ processors:
     spike_limit_percentage: 20
 
   # The collector does NOT choose an environment. It only mirrors what the app
-  # sent. The Splunk Java agent sets the legacy key deployment.environment (from
-  # otel.resource.attributes), while newer conventions and Splunk Cloud searches
-  # use deployment.environment.name. Copy the app's value across so both keys carry
-  # the SAME value that Splunk APM shows.
+  # sent, in BOTH directions, so every event carries both keys with the same value.
+  # Log Observer / Related Content correlate with APM on service.name and
+  # deployment.environment; newer conventions use deployment.environment.name.
   #   - app sent deployment.environment only        -> .name is set from it
-  #   - app sent deployment.environment.name        -> left as is (insert never overwrites)
+  #   - app sent deployment.environment.name only   -> deployment.environment is set from it
+  #   - app sent both                               -> both left exactly as sent
   #   - app sent neither                            -> no environment is added
+  # "insert" never overwrites an existing key, and skips when the source is missing.
   resource/defaults:
     attributes:
       - key: deployment.environment.name
         from_attribute: deployment.environment
+        action: insert
+      - key: deployment.environment
+        from_attribute: deployment.environment.name
         action: insert
 
   batch:

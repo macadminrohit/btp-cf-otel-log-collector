@@ -230,11 +230,12 @@ Two details that cost time on the trial: the header must use `%20` and not a spa
 **replaced** with `otlp`. Changing it back is the rollback (`--disable`).
 
 > **Environment comes from the app, not the collector.** The collector never invents an
-> environment. The Java agent sends `deployment.environment` (from the binding's
-> `otel.resource.attributes`); the collector copies that value into
-> `deployment.environment.name` so both fields in Splunk Cloud equal the environment shown
-> in Splunk APM. An app that sends no environment gets none. To change an app's environment,
-> change its own `otel.resource.attributes`, not the collector.
+> environment. It mirrors whichever of `deployment.environment` and
+> `deployment.environment.name` the app sent into the other, so every event carries both with
+> the same value. Splunk Log Observer correlates logs with APM traces on `service.name` and
+> `deployment.environment`, so both must equal what APM shows. If an app sends both keys they are
+> left as sent; if it sends neither, none is added. To change an app's environment, change its
+> own `otel.resource.attributes`, not the collector.
 
 > **Order matters.** Deploy and smoke-test the collector *first*. If an app exports
 > OTLP logs to a collector that is not there, it floods its own log with
