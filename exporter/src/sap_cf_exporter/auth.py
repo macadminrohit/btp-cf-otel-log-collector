@@ -6,7 +6,7 @@ Supported modes (``CF_AUTH_MODE``):
 * ``password``           - a technical user via the public ``cf`` client (what ``cf auth`` uses).
                            Refreshed with the refresh token when UAA returns one.
 * ``static_token``       - a manually supplied bearer token. Proof-of-concept only: it cannot
-                           be refreshed and expires (typically after ~12 hours).
+                           be refreshed and expires quickly (about 20 minutes on the SAP BTP trial: see the token's own `exp` claim).
 
 Tokens live in memory only and are never logged. ``get_token`` refreshes proactively
 ``refresh_skew_seconds`` before expiry and is safe under concurrent callers.

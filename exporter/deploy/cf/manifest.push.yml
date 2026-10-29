@@ -6,7 +6,7 @@
 #   cf push -f deploy/cf/manifest.push.yml
 # Prerequisites (secrets live in a user-provided service, never in this file):
 #   cf create-user-provided-service sap-cf-exporter-secrets -p <file>   (keys below)
-#     cf_bearer_token  : CF token (PoC: `cf oauth-token`, ~12 h). Production: use password mode
+#     cf_bearer_token  : CF token (PoC: `cf oauth-token`, lasts only ~20 min). Production: use password mode
 #                        (cf_username / cf_password) with a technical user, see README.
 #     otlp_push_token  : the Collector's OTLP ingest bearer token (its OTLP_INGEST_TOKEN)
 # The Collector must run with its metrics overlay (config.o11y-metrics.yaml).

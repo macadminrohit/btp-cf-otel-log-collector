@@ -13,14 +13,14 @@ Collector's `cloud_foundry` receiver needs, so this route does not use it.
 Status: verified end to end on the SAP BTP trial (Oct 29, 2026). The exporter read Log Cache with an
 ordinary user login, pushed to `otel-log-collector`, and the metrics for 3 apps appeared in Splunk
 Observability Cloud under their CF app names. Not yet tested on the customer landscape (`us10`), nor
-with the non-expiring password login (the trial run used a 12 h token).
+with the password login that renews its own tokens (the trial run used a `cf oauth-token` token, which expires after about 20 minutes, so it reported only briefly).
 
 ## Before you start
 
 | Need | Notes |
 | --- | --- |
 | A CF user that can read the apps (Space Developer or Auditor) | Same access `cf app` / `cf logs` already use |
-| For production: a technical user (username + password), not SSO | The login must not expire. A `cf oauth-token` token lasts about 12 h (PoC only) |
+| For production: a technical user (username + password), not SSO | The exporter must be able to log in again by itself. A `cf oauth-token` token lasts only about 20 minutes (demo only) |
 | Splunk Observability Cloud realm + org access token (ingest scope) | |
 | `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter |
 | The `exporter/` folder of this repo | Runtime files only. Needs the Python buildpack (available by default) |
@@ -86,7 +86,7 @@ Metrics sent (per instance, label `cf_instance_index`): `sap_cf_container_cpu_us
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `static bearer token has expired` | PoC token (~12 h) | Refresh the token in the service and `cf restart`, or switch to password mode |
+| `static bearer token has expired` | Demo token (~20 min) | Refresh the token in the service and `cf restart`, or switch to password mode |
 | `OTLP push rejected: HTTP 401` | Wrong `otlp_push_token` | Must equal the collector's `OTLP_INGEST_TOKEN` |
 | `OTLP push rejected: HTTP 404/405` | Wrong `OTLP_PUSH_ENDPOINT` | Use `https://<collector route>/v1/metrics` |
 | `HTTP 404` from Log Cache | Wrong `LOG_CACHE_URL` (landscape differs) | Set `LOG_CACHE_URL` explicitly |
