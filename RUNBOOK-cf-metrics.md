@@ -10,9 +10,10 @@ Collector's `cloud_foundry` receiver needs, so this route does not use it.
                                                                                          (logs keep going to Splunk Cloud, HEC)
 ```
 
-Status: the exporter ran against real Log Cache data and pushed to a local OTLP endpoint (all
-10 metrics for 3 apps). The collector overlay starts cleanly on the trial. End-to-end into Splunk
-Observability Cloud: see "Verify" (record the result here after the first run).
+Status: verified end to end on the SAP BTP trial (Oct 29, 2026). The exporter read Log Cache with an
+ordinary user login, pushed to `otel-log-collector`, and the metrics for 3 apps appeared in Splunk
+Observability Cloud under their CF app names. Not yet tested on the customer landscape (`us10`), nor
+with the non-expiring password login (the trial run used a 12 h token).
 
 ## Before you start
 
