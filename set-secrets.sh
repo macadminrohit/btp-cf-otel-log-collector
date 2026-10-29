@@ -20,14 +20,11 @@ set_env() { cf set-env "$APP" "$1" "$2" >/dev/null && echo "  set $1"; }
 read -r  -p "Splunk HEC URL (https://<host>/services/collector): " HEC_URL
 case "$HEC_URL" in https://*/services/collector) ;; *) echo "URL must be https and end in /services/collector" >&2; exit 1;; esac
 read -r  -p "Splunk index (must exist and be allowed on the HEC token): " HEC_INDEX
-read -r  -p "Environment label for apps that do not set one [btp-prod]: " ENVLABEL
-ENVLABEL="${ENVLABEL:-btp-prod}"
 read -rs -p "Splunk HEC token (input hidden): " HEC_TOKEN; echo
 [ -n "$HEC_TOKEN" ] || { echo "empty token" >&2; exit 1; }
 
 set_env SPLUNK_HEC_URL "$HEC_URL"
 set_env SPLUNK_HEC_INDEX "$HEC_INDEX"
-set_env DEPLOYMENT_ENVIRONMENT "$ENVLABEL"
 set_env SPLUNK_HEC_TOKEN "$HEC_TOKEN"
 unset HEC_TOKEN
 

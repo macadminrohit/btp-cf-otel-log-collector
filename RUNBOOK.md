@@ -108,7 +108,6 @@ cf push -f manifest.yml --vars-file vars-customer-dev.yml --no-start
 $app = 'otel-log-collector'
 cf set-env $app SPLUNK_HEC_URL   'https://http-inputs-<stack>.splunkcloud.com/services/collector'
 cf set-env $app SPLUNK_HEC_INDEX '<index>'
-cf set-env $app DEPLOYMENT_ENVIRONMENT 'btp-prod'
 cf set-env $app DEBUG_VERBOSITY 'basic'
 $s = Read-Host 'HEC token' -AsSecureString
 cf set-env $app SPLUNK_HEC_TOKEN ([Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)))
@@ -229,6 +228,13 @@ otel.exporter.otlp.logs.headers   = Authorization=Bearer%20<ingest token>
 Two details that cost time on the trial: the header must use `%20` and not a space
 (the buildpack puts it on a JVM argument line), and `otel.logs.exporter=none` must be
 **replaced** with `otlp`. Changing it back is the rollback (`--disable`).
+
+> **Environment comes from the app, not the collector.** The collector never invents an
+> environment. The Java agent sends `deployment.environment` (from the binding's
+> `otel.resource.attributes`); the collector copies that value into
+> `deployment.environment.name` so both fields in Splunk Cloud equal the environment shown
+> in Splunk APM. An app that sends no environment gets none. To change an app's environment,
+> change its own `otel.resource.attributes`, not the collector.
 
 > **Order matters.** Deploy and smoke-test the collector *first*. If an app exports
 > OTLP logs to a collector that is not there, it floods its own log with

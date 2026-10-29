@@ -33,14 +33,11 @@ Invoke-Cf app $App
 $hecUrl = Read-Host 'Splunk HEC URL (https://<host>/services/collector)'
 if ($hecUrl -notmatch '^https://.+/services/collector$') { throw 'URL must be https and end in /services/collector' }
 $hecIndex = Read-Host 'Splunk index (must exist and be allowed on the HEC token)'
-$envLabel = Read-Host 'Environment label for apps that do not set one [btp-prod]'
-if ([string]::IsNullOrWhiteSpace($envLabel)) { $envLabel = 'btp-prod' }
 $hecToken = Read-Secret 'Splunk HEC token (input hidden)'
 if ([string]::IsNullOrEmpty($hecToken)) { throw 'empty token' }
 
 Set-AppEnv SPLUNK_HEC_URL $hecUrl
 Set-AppEnv SPLUNK_HEC_INDEX $hecIndex
-Set-AppEnv DEPLOYMENT_ENVIRONMENT $envLabel
 Set-AppEnv SPLUNK_HEC_TOKEN $hecToken
 $hecToken = $null
 
