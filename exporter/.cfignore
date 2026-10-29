@@ -1,0 +1,23 @@
+# Files that must NOT be uploaded by `cf push` (keeps the package small and free of local state).
+.git
+.gitignore
+.env
+.env.*
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+fixtures
+docs
+Dockerfile
+.dockerignore
+docker-compose.yml
+config/collector.yaml
+config/collector.debug.yaml
+README.md
+pyproject.toml
+.secrets.tmp.json

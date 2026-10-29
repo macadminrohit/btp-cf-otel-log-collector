@@ -1,0 +1,49 @@
+# Cloud Foundry manifest: the exporter ONLY, reading Log Cache and PUSHING its metrics over
+# OTLP/HTTP to a Collector that already runs in the space (e.g. `otel-log-collector`).
+# No sidecar, no Collector binary in this app.
+#
+# Push from the repository root:
+#   cf push -f deploy/cf/manifest.push.yml
+# Prerequisites (secrets live in a user-provided service, never in this file):
+#   cf create-user-provided-service sap-cf-exporter-secrets -p <file>   (keys below)
+#     cf_bearer_token  : CF token (PoC: `cf oauth-token`, ~12 h). Production: use password mode
+#                        (cf_username / cf_password) with a technical user, see README.
+#     otlp_push_token  : the Collector's OTLP ingest bearer token (its OTLP_INGEST_TOKEN)
+# The Collector must run with its metrics overlay (config.o11y-metrics.yaml).
+#
+# Edit for your landscape: CF_API_URL, CF_ORG_NAMES, CF_SPACE_NAMES, CF_APP_NAMES,
+# OTLP_PUSH_ENDPOINT, DEPLOYMENT_ENVIRONMENT. LOG_CACHE_URL is derived from CF_API_URL
+# (api.cf.<region>... -> log-cache.cf.<region>...); set it only if your landscape differs.
+---
+applications:
+  - name: sap-cf-metrics-exporter
+    path: ../..
+    buildpacks:
+      - python_buildpack
+    stack: cflinuxfs5            # cflinuxfs4 is flagged DEPRECATED on this landscape
+    instances: 1                 # >1 would need SHARD_COUNT/SHARD_INDEX (see README, "Running replicas")
+    memory: 256M
+    disk_quota: 1G
+
+    # No inbound traffic: the app only calls out (CF API, Log Cache, the Collector's route).
+    no-route: true
+    health-check-type: process
+
+    services:
+      - sap-cf-exporter-secrets
+
+    env:
+      EXPORTER_SOURCE: live
+      METRICS_BACKEND: log_cache
+      EXPORTER_PORT: "8000"      # loopback only; nothing scrapes it in this mode
+      CF_API_URL: https://api.cf.<region>.hana.ondemand.com
+      CF_AUTH_MODE: static_token # PoC only. Production: password (technical user), see README
+      CF_ORG_NAMES: <your-org>
+      CF_SPACE_NAMES: <your-space>
+      CF_APP_NAMES: <app1>,<app2>   # empty = every app the user can see
+      POLL_INTERVAL_SECONDS: "60"
+      DEPLOYMENT_ENVIRONMENT: <env>
+      OTLP_PUSH_ENDPOINT: https://<collector-route>/v1/metrics
+
+    # Top-level `command:` and NOT a `processes:` block (see manifest.yml for why).
+    command: bash deploy/cf/run-exporter.sh

@@ -23,7 +23,7 @@ with the non-expiring password login (the trial run used a 12 h token).
 | For production: a technical user (username + password), not SSO | The login must not expire. A `cf oauth-token` token lasts about 12 h (PoC only) |
 | Splunk Observability Cloud realm + org access token (ingest scope) | |
 | `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter |
-| The `sap-cf-metrics-exporter` folder | Needs the Python buildpack (available by default) |
+| The `exporter/` folder of this repo | Runtime files only. Needs the Python buildpack (available by default) |
 
 Never paste tokens or passwords into chat, tickets or files. The commands below read them from
 hidden prompts or from the CF service.
@@ -59,14 +59,16 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
    cf create-user-provided-service sap-cf-exporter-secrets -p secrets.json
    rm secrets.json
    ```
-2. Edit `deploy/cf/manifest.push.yml`: `CF_API_URL`, `CF_ORG_NAMES`, `CF_SPACE_NAMES`,
+2. Edit `exporter/deploy/cf/manifest.push.yml` (replace every `<placeholder>`): `CF_API_URL`, `CF_ORG_NAMES`, `CF_SPACE_NAMES`,
    `CF_APP_NAMES`, `OTLP_PUSH_ENDPOINT` (the collector's route + `/v1/metrics`),
    `DEPLOYMENT_ENVIRONMENT`. Log Cache's URL is derived from `CF_API_URL`
    (`api.cf.us10...` becomes `log-cache.cf.us10...`); set `LOG_CACHE_URL` only if yours differs.
-3. Push from the exporter folder (staging needs about 1 GB of free org memory, runtime 256 MB):
+3. Push from inside `exporter/` (staging needs about 1 GB of free org memory, runtime 256 MB):
    ```bash
-   cf push -f deploy/cf/manifest.push.yml
+   cd exporter && cf push -f deploy/cf/manifest.push.yml
    ```
+   If staging fails with `no match found for python-3.12.x`, run `cf buildpacks`, pick an available
+   3.12.x and put it in `exporter/runtime.txt`.
 
 ## Verify (both)
 

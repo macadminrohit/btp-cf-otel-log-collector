@@ -3,4 +3,5 @@
 *.ps1
 *.md
 vars*.yml
+exporter/
 .gitignore
