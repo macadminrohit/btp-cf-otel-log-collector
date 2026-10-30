@@ -31,6 +31,19 @@ function Read-Secret([string]$Prompt) {
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
 
+# Run `cf` and return its exit code. Windows PowerShell 5.1 turns any stderr output of a native command
+# into a terminating error when $ErrorActionPreference is "Stop" (NativeCommandError), and a failing
+# `update` is expected on first use. So relax it just for the call and judge by the exit code.
+function Invoke-Cf {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cf @args 2>&1 | Out-Null
+        return $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previous }
+}
+
 $secrets = [ordered]@{}
 
 if ($Mode -eq "refresh_token") {
@@ -66,10 +79,8 @@ try {
     $json = $secrets | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding($false)))
 
-    & cf update-user-provided-service $Service -p $tmp 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        & cf create-user-provided-service $Service -p $tmp 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+    if ((Invoke-Cf update-user-provided-service $Service -p $tmp) -ne 0) {
+        if ((Invoke-Cf create-user-provided-service $Service -p $tmp) -ne 0) {
             throw "cf could not create or update the service. Are you logged in ('cf target')?"
         }
     }

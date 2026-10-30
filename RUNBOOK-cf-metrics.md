@@ -119,6 +119,8 @@ PowerShell `cf unset-env $app OTEL_EXTRA_CONFIG; cf restart $app`.
    # technical user instead:
    .\exporter\deploy\cf\set-exporter-secrets.ps1 -Mode password
    ```
+   If you downloaded the repo as a ZIP, Windows asks "Run only scripts that you trust" for every script.
+   Clear it once for the whole folder: `Get-ChildItem -Recurse . | Unblock-File`.
    If PowerShell says scripts are disabled, run it as
    `powershell -ExecutionPolicy Bypass -File .\exporter\deploy\cf\set-exporter-secrets.ps1` (affects only that run).
    - **SSO (`refresh_token`)**: the script reads the refresh token that `cf login --sso` saved in
