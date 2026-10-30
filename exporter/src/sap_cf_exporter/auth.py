@@ -5,8 +5,11 @@ Supported modes (``CF_AUTH_MODE``):
 * ``client_credentials`` - a dedicated OAuth client (recommended where SAP permits one).
 * ``password``           - a technical user via the public ``cf`` client (what ``cf auth`` uses).
                            Refreshed with the refresh token when UAA returns one.
+* ``refresh_token``      - for SSO users without a password: the refresh token of a ``cf login
+                           --sso`` session, traded for fresh access tokens (see RefreshTokenGrant).
 * ``static_token``       - a manually supplied bearer token. Proof-of-concept only: it cannot
-                           be refreshed and expires (typically after ~12 hours).
+                           be refreshed and expires quickly (about 20 minutes on the SAP BTP
+                           trial; see the token's own ``exp`` claim).
 
 Tokens live in memory only and are never logged. ``get_token`` refreshes proactively
 ``refresh_skew_seconds`` before expiry and is safe under concurrent callers.
@@ -113,7 +116,29 @@ class PasswordGrant:
         return (self.client_id, self.client_secret)
 
 
-Grant = ClientCredentialsGrant | PasswordGrant
+@dataclass(frozen=True, slots=True)
+class RefreshTokenGrant:
+    """Start from the refresh token of an SSO ``cf login`` session (public ``cf`` client).
+
+    For users who have no password (SSO / IAS). The exporter trades the refresh token for short
+    access tokens (about 20 minutes each) and keeps doing so; it never needs the user's password.
+    The refresh token is a long-lived credential equal to the user's session: treat it as a
+    secret, and prefer a technical user (``password`` mode) for production.
+    """
+
+    refresh_token: str
+    client_id: str = "cf"
+    client_secret: str = ""
+
+    def form(self) -> dict[str, str]:
+        return {"grant_type": "refresh_token", "refresh_token": self.refresh_token}
+
+    @property
+    def client_auth(self) -> tuple[str, str]:
+        return (self.client_id, self.client_secret)
+
+
+Grant = ClientCredentialsGrant | PasswordGrant | RefreshTokenGrant
 
 
 @dataclass(slots=True)
@@ -187,7 +212,16 @@ class UAATokenProvider(TokenProvider):
                 )
             except (AuthenticationError, APIError):
                 pass  # refresh token expired/revoked -> fall back to the full grant
-        return await self._token_request(uaa_url, self._grant.form())
+        try:
+            return await self._token_request(uaa_url, self._grant.form())
+        except AuthenticationError as exc:
+            if isinstance(self._grant, RefreshTokenGrant):
+                raise AuthenticationError(
+                    f"{exc} The refresh token is expired or revoked: sign in again "
+                    "(cf login --sso) and store the new CF_REFRESH_TOKEN.",
+                    status_code=exc.status_code,
+                ) from exc
+            raise
 
     async def _token_request(self, uaa_url: str, form: dict[str, str]) -> _CachedToken:
         response = await self._http.request(
@@ -251,6 +285,16 @@ def build_token_provider(settings: Settings, http: RetryingHTTP) -> TokenProvide
             raise ConfigError("client_credentials requires CF_CLIENT_ID and CF_CLIENT_SECRET")
         grant = ClientCredentialsGrant(
             settings.cf_client_id, settings.cf_client_secret.get_secret_value()
+        )
+    elif mode == "refresh_token":
+        if settings.cf_refresh_token is None:
+            raise ConfigError("refresh_token mode requires CF_REFRESH_TOKEN")
+        grant = RefreshTokenGrant(
+            refresh_token=settings.cf_refresh_token.get_secret_value(),
+            client_id=settings.cf_client_id or "cf",
+            client_secret=settings.cf_client_secret.get_secret_value()
+            if settings.cf_client_secret
+            else "",
         )
     else:
         if not settings.cf_username or settings.cf_password is None:

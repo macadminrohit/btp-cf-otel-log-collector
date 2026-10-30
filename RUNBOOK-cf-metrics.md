@@ -13,14 +13,15 @@ Collector's `cloud_foundry` receiver needs, so this route does not use it.
 Status: verified end to end on the SAP BTP trial (Oct 29, 2026). The exporter read Log Cache with an
 ordinary user login, pushed to `otel-log-collector`, and the metrics for 3 apps appeared in Splunk
 Observability Cloud under their CF app names. Not yet tested on the customer landscape (`us10`), nor
-with the non-expiring password login (the trial run used a 12 h token).
+in `password` mode. The first trial run used a copied `cf oauth-token` token (about 20 minutes, so it
+reported only briefly); it now runs with `CF_AUTH_MODE=refresh_token` (SSO), which renews itself.
 
 ## Before you start
 
 | Need | Notes |
 | --- | --- |
 | A CF user that can read the apps (Space Developer or Auditor) | Same access `cf app` / `cf logs` already use |
-| For production: a technical user (username + password), not SSO | The login must not expire. A `cf oauth-token` token lasts about 12 h (PoC only) |
+| A way for the exporter to log in again by itself | SSO user: the refresh token from `cf login --sso` (`refresh_token` mode). Production: a technical user (username + password). A copied `cf oauth-token` token lasts only about 20 minutes (demo only) |
 | Splunk Observability Cloud realm + org access token (ingest scope) | |
 | `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter |
 | The `exporter/` folder of this repo | Runtime files only. Needs the Python buildpack (available by default) |
@@ -53,8 +54,12 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
 
 1. Create the secrets service. File `secrets.json` (delete it afterwards) holds:
    `{"cf_bearer_token": "<PoC token>", "otlp_push_token": "<value of the collector's OTLP_INGEST_TOKEN>"}`
-   For production use `cf_username` and `cf_password` instead of `cf_bearer_token`, and set
-   `CF_AUTH_MODE: password` in the manifest.
+   **SSO users (no password):** use `cf_refresh_token` instead of `cf_bearer_token` and set
+   `CF_AUTH_MODE: refresh_token`. Run `cf login --sso`, then take the `RefreshToken` value from
+   `~/.cf/config.json` (open the file locally; do not paste it into chat or tickets). The exporter trades it
+   for a new access token every ~20 minutes. It is your session credential: store it only in this service.
+   If the exporter reports "refresh token is expired or revoked", repeat the login and update the service.
+   **Production:** a technical user is better: `cf_username` + `cf_password` and `CF_AUTH_MODE: password`.
    ```bash
    cf create-user-provided-service sap-cf-exporter-secrets -p secrets.json
    rm secrets.json
@@ -86,7 +91,8 @@ Metrics sent (per instance, label `cf_instance_index`): `sap_cf_container_cpu_us
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `static bearer token has expired` | PoC token (~12 h) | Refresh the token in the service and `cf restart`, or switch to password mode |
+| `static bearer token has expired` | Demo token (~20 min) | Switch to `refresh_token` (SSO) or `password` mode |
+| `refresh token is expired or revoked` | SSO session ended | `cf login --sso`, update `cf_refresh_token` in the service, `cf restart` |
 | `OTLP push rejected: HTTP 401` | Wrong `otlp_push_token` | Must equal the collector's `OTLP_INGEST_TOKEN` |
 | `OTLP push rejected: HTTP 404/405` | Wrong `OTLP_PUSH_ENDPOINT` | Use `https://<collector route>/v1/metrics` |
 | `HTTP 404` from Log Cache | Wrong `LOG_CACHE_URL` (landscape differs) | Set `LOG_CACHE_URL` explicitly |

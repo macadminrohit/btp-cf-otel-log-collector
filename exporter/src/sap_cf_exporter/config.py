@@ -61,7 +61,10 @@ class Settings(BaseSettings):
     cf_uaa_url: str | None = Field(
         None, description="Override UAA URL; discovered from the CF API root when unset."
     )
-    cf_auth_mode: Literal["client_credentials", "password", "static_token"] = "client_credentials"
+    cf_auth_mode: Literal["client_credentials", "password", "refresh_token", "static_token"] = (
+        "client_credentials"
+    )
+    cf_refresh_token: SecretStr | None = None
     cf_client_id: str | None = None
     cf_client_secret: SecretStr | None = None
     cf_username: str | None = None
@@ -197,6 +200,9 @@ class Settings(BaseSettings):
                 missing.append("CF_USERNAME")
             if not self.cf_password:
                 missing.append("CF_PASSWORD")
+        elif mode == "refresh_token":
+            if not self.cf_refresh_token:
+                missing.append("CF_REFRESH_TOKEN")
         elif mode == "static_token" and not self.cf_bearer_token:
             missing.append("CF_BEARER_TOKEN")
         if missing:

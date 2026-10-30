@@ -6,8 +6,10 @@
 #   cf push -f deploy/cf/manifest.push.yml
 # Prerequisites (secrets live in a user-provided service, never in this file):
 #   cf create-user-provided-service sap-cf-exporter-secrets -p <file>   (keys below)
-#     cf_bearer_token  : CF token (PoC: `cf oauth-token`, ~12 h). Production: use password mode
-#                        (cf_username / cf_password) with a technical user, see README.
+#     One CF login credential, matching CF_AUTH_MODE below:
+#       password       -> cf_username + cf_password   (technical user; recommended for production)
+#       refresh_token  -> cf_refresh_token            (SSO user without a password; see README)
+#       static_token   -> cf_bearer_token             (demo only: `cf oauth-token` lasts ~20 min)
 #     otlp_push_token  : the Collector's OTLP ingest bearer token (its OTLP_INGEST_TOKEN)
 # The Collector must run with its metrics overlay (config.o11y-metrics.yaml).
 #
@@ -37,7 +39,7 @@ applications:
       METRICS_BACKEND: log_cache
       EXPORTER_PORT: "8000"      # loopback only; nothing scrapes it in this mode
       CF_API_URL: https://api.cf.<region>.hana.ondemand.com
-      CF_AUTH_MODE: static_token # PoC only. Production: password (technical user), see README
+      CF_AUTH_MODE: refresh_token # SSO user. Technical user: password. static_token = demo only
       CF_ORG_NAMES: <your-org>
       CF_SPACE_NAMES: <your-space>
       CF_APP_NAMES: <app1>,<app2>   # empty = every app the user can see

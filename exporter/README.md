@@ -31,12 +31,12 @@ fails with `no match found for python-x.y.z`, run `cf buildpacks` and pick an av
 | `METRICS_BACKEND` | `log_cache` (used here) or `stats_api` |
 | `CF_API_URL` | `https://api.cf.<region>.hana.ondemand.com`. Log Cache's URL is derived from it (`log-cache.cf.<region>...`); set `LOG_CACHE_URL` only if yours differs |
 | `CF_ORG_NAMES`, `CF_SPACE_NAMES`, `CF_APP_NAMES` | Which apps to read. Empty = everything the user can see |
-| `CF_AUTH_MODE` | `password` (technical user, does not expire; recommended), `client_credentials`, or `static_token` (PoC only: a `cf oauth-token` token lasts about 12 h) |
+| `CF_AUTH_MODE` | `password` (technical user; fetches and refreshes its own tokens; recommended for production), `refresh_token` (SSO user without a password: the refresh token from `cf login --sso`, personal and long-lived, store it only in the secrets service), `client_credentials`, or `static_token` (demo only: a `cf oauth-token` token lasts about 20 minutes) |
 | `OTLP_PUSH_ENDPOINT` | `https://<collector-route>/v1/metrics` |
 | `DEPLOYMENT_ENVIRONMENT` | Sent as `deployment.environment.name` |
 | `POLL_INTERVAL_SECONDS` | Default 60 |
 
-Secrets (`cf_username`/`cf_password` or `cf_bearer_token`, and `otlp_push_token`) come from the
+Secrets (`cf_username`/`cf_password`, `cf_refresh_token` or `cf_bearer_token`, and `otlp_push_token`) come from the
 user-provided service `sap-cf-exporter-secrets`, never from files or the manifest.
 
 ## What is sent
@@ -46,5 +46,5 @@ name) and `deployment.environment.name`. Data point attribute: `cf_instance_inde
 `cf_process_type` for non-web processes). Kept small because Splunk Observability Cloud limits the
 number of new dimension key names per org per week.
 
-Status: verified on an SAP BTP trial (`us10-001`) with a 12 h token. Not yet tested on other
+Status: verified on an SAP BTP trial (`us10-001`) with a short-lived (~20 min) token, so it only reported until that token expired. Not yet tested on other
 landscapes, nor with `password` mode against a live landscape.
