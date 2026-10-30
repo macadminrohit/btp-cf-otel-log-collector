@@ -24,7 +24,7 @@ reported only briefly); it now runs with `CF_AUTH_MODE=refresh_token` (SSO), whi
 | A way for the exporter to log in again by itself | SSO user: the refresh token from `cf login --sso` (`refresh_token` mode). Production: a technical user (username + password). A copied `cf oauth-token` token lasts only about 20 minutes (demo only) |
 | Splunk Observability Cloud realm + org access token (ingest scope) | |
 | `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter. You need that value (it was set with `set-secrets`) |
-| Python 3 on the machine you deploy from | Only for `exporter/deploy/cf/set-exporter-secrets.py`, which stores the secrets without showing them |
+| Nothing extra on Windows | `exporter/deploy/cf/set-exporter-secrets.ps1` (PowerShell) stores the secrets without showing them. macOS/Linux can use `set-exporter-secrets.py` (needs Python 3) instead. The exporter app itself runs on Cloud Foundry, so Python is never needed on your machine for it |
 | Room in the space for one more app | 256 MB at runtime, about 1 GB free org memory while staging |
 | Egress from the space to the CF API, UAA, Log Cache and the collector route | Default CF security groups allow this. If your landscape restricts egress, allow those hosts |
 | Security sign-off for `refresh_token` mode | The refresh token is the deploying user's session credential. Ask your security team before storing it in a CF service. If they say no, use a technical user (`password` mode) |
@@ -103,7 +103,7 @@ PowerShell `cf unset-env $app OTEL_EXTRA_CONFIG; cf restart $app`.
 
 ## Part 2: deploy the exporter
 
-1. Create the secrets service with the helper. It prompts (hidden) for the collector's `OTLP_INGEST_TOKEN`,
+1. Create the secrets service with the helper (`.ps1` for PowerShell, `.py` for bash). It prompts (hidden) for the collector's `OTLP_INGEST_TOKEN`,
    stores everything in the `sap-cf-exporter-secrets` service through a temporary owner-only file that is
    deleted at once, and prints only the key names. Nothing lands in shell history or on screen.
    ```bash
@@ -112,20 +112,22 @@ PowerShell `cf unset-env $app OTEL_EXTRA_CONFIG; cf restart $app`.
    # production, technical user instead:
    python exporter/deploy/cf/set-exporter-secrets.py --mode password
    ```
-   PowerShell (if `python` opens the Microsoft Store, use `py` instead):
+   PowerShell (no Python needed). Add `-DryRun` first to check inputs without changing anything:
    ```powershell
    cf login --sso
-   python .\exporter\deploy\cf\set-exporter-secrets.py
+   .\exporter\deploy\cf\set-exporter-secrets.ps1
    # technical user instead:
-   python .\exporter\deploy\cf\set-exporter-secrets.py --mode password
+   .\exporter\deploy\cf\set-exporter-secrets.ps1 -Mode password
    ```
+   If PowerShell says scripts are disabled, run it as
+   `powershell -ExecutionPolicy Bypass -File .\exporter\deploy\cf\set-exporter-secrets.ps1` (affects only that run).
    - **SSO (`refresh_token`)**: the script reads the refresh token that `cf login --sso` saved in
      `~/.cf/config.json` (Windows: `%USERPROFILE%\.cf\config.json`). The exporter trades it for a new ~20 min
      access token each time, so it runs unattended. It is your session credential: store it only here.
      If the exporter reports "refresh token is expired or revoked", run `cf login --sso`, run the script again,
      then `cf restart sap-cf-metrics-exporter`.
    - **Technical user (`password`)**: preferred for production. Set `CF_AUTH_MODE: password` in the manifest.
-   - Add `--dry-run` to check inputs and see which keys would be stored, without changing anything.
+   - Add `--dry-run` (bash/Python) or `-DryRun` (PowerShell) to check inputs and see which keys would be stored, without changing anything.
 2. Edit `exporter/deploy/cf/manifest.push.yml` (replace every `<placeholder>`): `CF_API_URL`, `CF_ORG_NAMES`, `CF_SPACE_NAMES`,
    `CF_APP_NAMES`, `OTLP_PUSH_ENDPOINT` (the collector's route + `/v1/metrics`),
    `DEPLOYMENT_ENVIRONMENT`, and `CF_AUTH_MODE` (`refresh_token` for SSO, `password` for a technical user). Log Cache's URL is derived from `CF_API_URL`
