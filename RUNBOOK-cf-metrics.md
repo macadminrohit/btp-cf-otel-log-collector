@@ -45,7 +45,16 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: $(cf oauth-token)" \
   "$LOG_CACHE/api/v1/read/$GUID?envelope_types=GAUGE&limit=1"
 ```
 
-(PowerShell: use `curl.exe` and `$(cf oauth-token)` the same way.) The token is sent but not printed.
+PowerShell (use `curl.exe`, not `curl`: in Windows PowerShell `curl` is an alias of `Invoke-WebRequest`):
+
+```powershell
+cf login --sso
+$LogCache = "https://log-cache.cf.us10.hana.ondemand.com"   # CF API host with api. -> log-cache.
+$Guid = cf app <one-of-your-apps> --guid
+curl.exe -s -o NUL -w "%{http_code}`n" -H "Authorization: $(cf oauth-token)" "$LogCache/api/v1/read/${Guid}?envelope_types=GAUGE&limit=1"
+```
+
+The token is sent but not printed.
 
 | Result | Meaning |
 | --- | --- |
@@ -61,6 +70,8 @@ current one (its start command accepts an optional overlay). Run `./fetch.sh` (o
 `otelcol-contrib` binary is not in this folder, and use the same `vars-<target>.yml` as your first install.
 The existing `OTLP_INGEST_TOKEN` and HEC settings stay on the app. Then:
 
+Bash:
+
 ```bash
 app=otel-log-collector
 cf push -f manifest.yml --vars-file vars-<target>.yml --no-start
@@ -71,11 +82,24 @@ cf start $app
 cf logs $app --recent | grep -E "Everything is ready|error"
 ```
 
-PowerShell: replace the `read` line with
-`$s = Read-Host 'O11y token' -AsSecureString; cf set-env $app SPLUNK_O11Y_ACCESS_TOKEN ([Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)))`.
+PowerShell:
 
-Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CONFIG && cf restart $app`
-(logs only, exactly as before).
+```powershell
+$app = "otel-log-collector"
+cf push -f manifest.yml --vars-file vars-<target>.yml --no-start
+cf set-env $app SPLUNK_O11Y_REALM "<realm, e.g. us1>"
+$s = Read-Host "O11y access token" -AsSecureString
+$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)
+try { cf set-env $app SPLUNK_O11Y_ACCESS_TOKEN ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b); Remove-Variable s, b }
+cf set-env $app OTEL_EXTRA_CONFIG config.o11y-metrics.yaml
+cf start $app
+cf logs $app --recent | Select-String "Everything is ready|error"
+```
+
+Logs pause only for the restart. **Roll back** (logs only, exactly as before):
+bash `cf unset-env $app OTEL_EXTRA_CONFIG && cf restart $app`,
+PowerShell `cf unset-env $app OTEL_EXTRA_CONFIG; cf restart $app`.
 
 ## Part 2: deploy the exporter
 
@@ -87,6 +111,13 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
    python exporter/deploy/cf/set-exporter-secrets.py                    # SSO user: no password needed
    # production, technical user instead:
    python exporter/deploy/cf/set-exporter-secrets.py --mode password
+   ```
+   PowerShell (if `python` opens the Microsoft Store, use `py` instead):
+   ```powershell
+   cf login --sso
+   python .\exporter\deploy\cf\set-exporter-secrets.py
+   # technical user instead:
+   python .\exporter\deploy\cf\set-exporter-secrets.py --mode password
    ```
    - **SSO (`refresh_token`)**: the script reads the refresh token that `cf login --sso` saved in
      `~/.cf/config.json` (Windows: `%USERPROFILE%\.cf\config.json`). The exporter trades it for a new ~20 min
@@ -103,13 +134,15 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
    ```bash
    cd exporter && cf push -f deploy/cf/manifest.push.yml
    ```
+   PowerShell: `cd exporter; cf push -f deploy/cf/manifest.push.yml`
    If staging fails with `no match found for python-3.12.x`, run `cf buildpacks`, pick an available
    3.12.x and put it in `exporter/runtime.txt`.
 
 ## Verify (both)
 
 1. Exporter: `cf logs sap-cf-metrics-exporter --recent` shows `Cycle ok: N/N processes fetched` and
-   no `OTLP push rejected` lines.
+   no `OTLP push rejected` lines. To filter: bash `| grep -E "Cycle|rejected|ERROR"`,
+   PowerShell `| Select-String "Cycle|rejected|ERROR"`.
 2. Splunk Observability Cloud: Metric Finder, search `sap_cf_container_memory_usage_bytes`; filter
    by `service.name` (= CF app name) or `deployment.environment.name`. First data in 1-2 minutes.
 
