@@ -24,7 +24,7 @@ reported only briefly); it now runs with `CF_AUTH_MODE=refresh_token` (SSO), whi
 | A way for the exporter to log in again by itself | SSO user: the refresh token from `cf login --sso` (`refresh_token` mode). Production: a technical user (username + password). A copied `cf oauth-token` token lasts only about 20 minutes (demo only) |
 | Splunk Observability Cloud realm + org access token (ingest scope) | |
 | `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter. You need that value (it was set with `set-secrets`) |
-| Python 3 on the machine you deploy from | Only for `exporter/deploy/cf/set-exporter-secrets.py`, which stores the secrets without showing them |
+| Nothing extra on Windows | `exporter/deploy/cf/set-exporter-secrets.ps1` (PowerShell) stores the secrets without showing them. macOS/Linux can use `set-exporter-secrets.py` (needs Python 3) instead. The exporter app itself runs on Cloud Foundry, so Python is never needed on your machine for it |
 | Room in the space for one more app | 256 MB at runtime, about 1 GB free org memory while staging |
 | Egress from the space to the CF API, UAA, Log Cache and the collector route | Default CF security groups allow this. If your landscape restricts egress, allow those hosts |
 | Security sign-off for `refresh_token` mode | The refresh token is the deploying user's session credential. Ask your security team before storing it in a CF service. If they say no, use a technical user (`password` mode) |
@@ -45,7 +45,16 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: $(cf oauth-token)" \
   "$LOG_CACHE/api/v1/read/$GUID?envelope_types=GAUGE&limit=1"
 ```
 
-(PowerShell: use `curl.exe` and `$(cf oauth-token)` the same way.) The token is sent but not printed.
+PowerShell (use `curl.exe`, not `curl`: in Windows PowerShell `curl` is an alias of `Invoke-WebRequest`):
+
+```powershell
+cf login --sso
+$LogCache = "https://log-cache.cf.us10.hana.ondemand.com"   # CF API host with api. -> log-cache.
+$Guid = cf app <one-of-your-apps> --guid
+curl.exe -s -o NUL -w "%{http_code}`n" -H "Authorization: $(cf oauth-token)" "$LogCache/api/v1/read/${Guid}?envelope_types=GAUGE&limit=1"
+```
+
+The token is sent but not printed.
 
 | Result | Meaning |
 | --- | --- |
@@ -61,6 +70,8 @@ current one (its start command accepts an optional overlay). Run `./fetch.sh` (o
 `otelcol-contrib` binary is not in this folder, and use the same `vars-<target>.yml` as your first install.
 The existing `OTLP_INGEST_TOKEN` and HEC settings stay on the app. Then:
 
+Bash:
+
 ```bash
 app=otel-log-collector
 cf push -f manifest.yml --vars-file vars-<target>.yml --no-start
@@ -71,15 +82,28 @@ cf start $app
 cf logs $app --recent | grep -E "Everything is ready|error"
 ```
 
-PowerShell: replace the `read` line with
-`$s = Read-Host 'O11y token' -AsSecureString; cf set-env $app SPLUNK_O11Y_ACCESS_TOKEN ([Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)))`.
+PowerShell:
 
-Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CONFIG && cf restart $app`
-(logs only, exactly as before).
+```powershell
+$app = "otel-log-collector"
+cf push -f manifest.yml --vars-file vars-<target>.yml --no-start
+cf set-env $app SPLUNK_O11Y_REALM "<realm, e.g. us1>"
+$s = Read-Host "O11y access token" -AsSecureString
+$b = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($s)
+try { cf set-env $app SPLUNK_O11Y_ACCESS_TOKEN ([Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b); Remove-Variable s, b }
+cf set-env $app OTEL_EXTRA_CONFIG config.o11y-metrics.yaml
+cf start $app
+cf logs $app --recent | Select-String "Everything is ready|error"
+```
+
+Logs pause only for the restart. **Roll back** (logs only, exactly as before):
+bash `cf unset-env $app OTEL_EXTRA_CONFIG && cf restart $app`,
+PowerShell `cf unset-env $app OTEL_EXTRA_CONFIG; cf restart $app`.
 
 ## Part 2: deploy the exporter
 
-1. Create the secrets service with the helper. It prompts (hidden) for the collector's `OTLP_INGEST_TOKEN`,
+1. Create the secrets service with the helper (`.ps1` for PowerShell, `.py` for bash). It prompts (hidden) for the collector's `OTLP_INGEST_TOKEN`,
    stores everything in the `sap-cf-exporter-secrets` service through a temporary owner-only file that is
    deleted at once, and prints only the key names. Nothing lands in shell history or on screen.
    ```bash
@@ -88,13 +112,22 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
    # production, technical user instead:
    python exporter/deploy/cf/set-exporter-secrets.py --mode password
    ```
+   PowerShell (no Python needed). Add `-DryRun` first to check inputs without changing anything:
+   ```powershell
+   cf login --sso
+   .\exporter\deploy\cf\set-exporter-secrets.ps1
+   # technical user instead:
+   .\exporter\deploy\cf\set-exporter-secrets.ps1 -Mode password
+   ```
+   If PowerShell says scripts are disabled, run it as
+   `powershell -ExecutionPolicy Bypass -File .\exporter\deploy\cf\set-exporter-secrets.ps1` (affects only that run).
    - **SSO (`refresh_token`)**: the script reads the refresh token that `cf login --sso` saved in
      `~/.cf/config.json` (Windows: `%USERPROFILE%\.cf\config.json`). The exporter trades it for a new ~20 min
      access token each time, so it runs unattended. It is your session credential: store it only here.
      If the exporter reports "refresh token is expired or revoked", run `cf login --sso`, run the script again,
      then `cf restart sap-cf-metrics-exporter`.
    - **Technical user (`password`)**: preferred for production. Set `CF_AUTH_MODE: password` in the manifest.
-   - Add `--dry-run` to check inputs and see which keys would be stored, without changing anything.
+   - Add `--dry-run` (bash/Python) or `-DryRun` (PowerShell) to check inputs and see which keys would be stored, without changing anything.
 2. Edit `exporter/deploy/cf/manifest.push.yml` (replace every `<placeholder>`): `CF_API_URL`, `CF_ORG_NAMES`, `CF_SPACE_NAMES`,
    `CF_APP_NAMES`, `OTLP_PUSH_ENDPOINT` (the collector's route + `/v1/metrics`),
    `DEPLOYMENT_ENVIRONMENT`, and `CF_AUTH_MODE` (`refresh_token` for SSO, `password` for a technical user). Log Cache's URL is derived from `CF_API_URL`
@@ -103,13 +136,15 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
    ```bash
    cd exporter && cf push -f deploy/cf/manifest.push.yml
    ```
+   PowerShell: `cd exporter; cf push -f deploy/cf/manifest.push.yml`
    If staging fails with `no match found for python-3.12.x`, run `cf buildpacks`, pick an available
    3.12.x and put it in `exporter/runtime.txt`.
 
 ## Verify (both)
 
 1. Exporter: `cf logs sap-cf-metrics-exporter --recent` shows `Cycle ok: N/N processes fetched` and
-   no `OTLP push rejected` lines.
+   no `OTLP push rejected` lines. To filter: bash `| grep -E "Cycle|rejected|ERROR"`,
+   PowerShell `| Select-String "Cycle|rejected|ERROR"`.
 2. Splunk Observability Cloud: Metric Finder, search `sap_cf_container_memory_usage_bytes`; filter
    by `service.name` (= CF app name) or `deployment.environment.name`. First data in 1-2 minutes.
 

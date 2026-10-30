@@ -35,7 +35,7 @@ def cf_config_path() -> Path:
 def read_refresh_token() -> str:
     path = cf_config_path()
     try:
-        token = json.loads(path.read_text(encoding="utf-8")).get("RefreshToken", "")
+        token = json.loads(path.read_text(encoding="utf-8-sig")).get("RefreshToken", "")
     except (OSError, ValueError):
         token = ""
     if not token:
