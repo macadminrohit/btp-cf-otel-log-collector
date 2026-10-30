@@ -23,16 +23,43 @@ reported only briefly); it now runs with `CF_AUTH_MODE=refresh_token` (SSO), whi
 | A CF user that can read the apps (Space Developer or Auditor) | Same access `cf app` / `cf logs` already use |
 | A way for the exporter to log in again by itself | SSO user: the refresh token from `cf login --sso` (`refresh_token` mode). Production: a technical user (username + password). A copied `cf oauth-token` token lasts only about 20 minutes (demo only) |
 | Splunk Observability Cloud realm + org access token (ingest scope) | |
-| `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter |
+| `otel-log-collector` already running with logs working | Its `OTLP_INGEST_TOKEN` is reused by the exporter. You need that value (it was set with `set-secrets`) |
+| Python 3 on the machine you deploy from | Only for `exporter/deploy/cf/set-exporter-secrets.py`, which stores the secrets without showing them |
+| Room in the space for one more app | 256 MB at runtime, about 1 GB free org memory while staging |
+| Egress from the space to the CF API, UAA, Log Cache and the collector route | Default CF security groups allow this. If your landscape restricts egress, allow those hosts |
+| Security sign-off for `refresh_token` mode | The refresh token is the deploying user's session credential. Ask your security team before storing it in a CF service. If they say no, use a technical user (`password` mode) |
 | The `exporter/` folder of this repo | Runtime files only. Needs the Python buildpack (available by default) |
 
 Never paste tokens or passwords into chat, tickets or files. The commands below read them from
 hidden prompts or from the CF service.
 
+## Part 0: pre-flight check (2 minutes, nothing is deployed)
+
+Prove that your SSO login can read Log Cache. This is exactly what the exporter will do.
+
+```bash
+cf login --sso                      # customer API, org and space
+LOG_CACHE=https://log-cache.cf.us10.hana.ondemand.com    # same as the CF API host with api. -> log-cache.
+GUID=$(cf app <one-of-your-apps> --guid)
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: $(cf oauth-token)" \
+  "$LOG_CACHE/api/v1/read/$GUID?envelope_types=GAUGE&limit=1"
+```
+
+(PowerShell: use `curl.exe` and `$(cf oauth-token)` the same way.) The token is sent but not printed.
+
+| Result | Meaning |
+| --- | --- |
+| `200` | Good. Continue. |
+| `401` | Login expired: `cf login --sso` again |
+| `403` | Your role cannot read this app: you need Space Developer or Space Auditor |
+| `404` / other | Log Cache host differs on this landscape: use it as `LOG_CACHE_URL` in the manifest |
+
 ## Part 1: turn on the metrics pipeline in the collector
 
-Download `config.o11y-metrics.yaml` next to `config.yaml`, and use the `manifest.yml` from this
-folder (its start command accepts an optional overlay). Then:
+`git pull` this repo, so `config.o11y-metrics.yaml` sits next to `config.yaml` and `manifest.yml` is the
+current one (its start command accepts an optional overlay). Run `./fetch.sh` (or `fetch.ps1`) if the
+`otelcol-contrib` binary is not in this folder, and use the same `vars-<target>.yml` as your first install.
+The existing `OTLP_INGEST_TOKEN` and HEC settings stay on the app. Then:
 
 ```bash
 app=otel-log-collector
@@ -52,21 +79,25 @@ Logs pause only for the restart. **Roll back:** `cf unset-env $app OTEL_EXTRA_CO
 
 ## Part 2: deploy the exporter
 
-1. Create the secrets service. File `secrets.json` (delete it afterwards) holds:
-   `{"cf_bearer_token": "<PoC token>", "otlp_push_token": "<value of the collector's OTLP_INGEST_TOKEN>"}`
-   **SSO users (no password):** use `cf_refresh_token` instead of `cf_bearer_token` and set
-   `CF_AUTH_MODE: refresh_token`. Run `cf login --sso`, then take the `RefreshToken` value from
-   `~/.cf/config.json` (open the file locally; do not paste it into chat or tickets). The exporter trades it
-   for a new access token every ~20 minutes. It is your session credential: store it only in this service.
-   If the exporter reports "refresh token is expired or revoked", repeat the login and update the service.
-   **Production:** a technical user is better: `cf_username` + `cf_password` and `CF_AUTH_MODE: password`.
+1. Create the secrets service with the helper. It prompts (hidden) for the collector's `OTLP_INGEST_TOKEN`,
+   stores everything in the `sap-cf-exporter-secrets` service through a temporary owner-only file that is
+   deleted at once, and prints only the key names. Nothing lands in shell history or on screen.
    ```bash
-   cf create-user-provided-service sap-cf-exporter-secrets -p secrets.json
-   rm secrets.json
+   cf login --sso        # the same user and target the exporter will read with
+   python exporter/deploy/cf/set-exporter-secrets.py                    # SSO user: no password needed
+   # production, technical user instead:
+   python exporter/deploy/cf/set-exporter-secrets.py --mode password
    ```
+   - **SSO (`refresh_token`)**: the script reads the refresh token that `cf login --sso` saved in
+     `~/.cf/config.json` (Windows: `%USERPROFILE%\.cf\config.json`). The exporter trades it for a new ~20 min
+     access token each time, so it runs unattended. It is your session credential: store it only here.
+     If the exporter reports "refresh token is expired or revoked", run `cf login --sso`, run the script again,
+     then `cf restart sap-cf-metrics-exporter`.
+   - **Technical user (`password`)**: preferred for production. Set `CF_AUTH_MODE: password` in the manifest.
+   - Add `--dry-run` to check inputs and see which keys would be stored, without changing anything.
 2. Edit `exporter/deploy/cf/manifest.push.yml` (replace every `<placeholder>`): `CF_API_URL`, `CF_ORG_NAMES`, `CF_SPACE_NAMES`,
    `CF_APP_NAMES`, `OTLP_PUSH_ENDPOINT` (the collector's route + `/v1/metrics`),
-   `DEPLOYMENT_ENVIRONMENT`. Log Cache's URL is derived from `CF_API_URL`
+   `DEPLOYMENT_ENVIRONMENT`, and `CF_AUTH_MODE` (`refresh_token` for SSO, `password` for a technical user). Log Cache's URL is derived from `CF_API_URL`
    (`api.cf.us10...` becomes `log-cache.cf.us10...`); set `LOG_CACHE_URL` only if yours differs.
 3. Push from inside `exporter/` (staging needs about 1 GB of free org memory, runtime 256 MB):
    ```bash
@@ -95,6 +126,7 @@ Metrics sent (per instance, label `cf_instance_index`): `sap_cf_container_cpu_us
 | `refresh token is expired or revoked` | SSO session ended | `cf login --sso`, update `cf_refresh_token` in the service, `cf restart` |
 | `OTLP push rejected: HTTP 401` | Wrong `otlp_push_token` | Must equal the collector's `OTLP_INGEST_TOKEN` |
 | `OTLP push rejected: HTTP 404/405` | Wrong `OTLP_PUSH_ENDPOINT` | Use `https://<collector route>/v1/metrics` |
+| Timeouts / connection errors to the CF API, UAA or Log Cache | Egress blocked for the space | Allow those hosts in the space's application security group |
 | `HTTP 404` from Log Cache | Wrong `LOG_CACHE_URL` (landscape differs) | Set `LOG_CACHE_URL` explicitly |
 | `Cycle ok: 0/N` and an app shows no data | App stopped, or no gauges in the last 3 min | Start the app. (Trial: apps are stopped overnight.) |
 | Pushes accepted, nothing in Splunk Observability Cloud | Wrong realm/token on the collector | Check `Exporting failed` in the collector logs |
