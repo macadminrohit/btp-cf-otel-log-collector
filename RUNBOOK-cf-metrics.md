@@ -164,6 +164,7 @@ Metrics sent (per instance, label `cf_instance_index`): `sap_cf_container_cpu_us
 | `OTLP push rejected: HTTP 401` | Wrong `otlp_push_token` | Must equal the collector's `OTLP_INGEST_TOKEN` |
 | `OTLP push rejected: HTTP 404/405` | Wrong `OTLP_PUSH_ENDPOINT` | Use `https://<collector route>/v1/metrics` |
 | Timeouts / connection errors to the CF API, UAA or Log Cache | Egress blocked for the space | Allow those hosts in the space's application security group |
+| Log shows `Configured orgs not found/visible` and `Discovered 0 apps` | An org/space/app name contains a comma, so the list was split in two (e.g. `Acme Services, Inc._prod`) | Write that list as a JSON array in single quotes: `CF_ORG_NAMES: '["Acme Services, Inc._prod"]'`. Or leave `CF_ORG_NAMES` out (empty = every org you can see) and scope with `CF_SPACE_NAMES` and `CF_APP_NAMES` |
 | `HTTP 404` from Log Cache | Wrong `LOG_CACHE_URL` (landscape differs) | Set `LOG_CACHE_URL` explicitly |
 | `Cycle ok: 0/N` and an app shows no data | App stopped, or no gauges in the last 3 min | Start the app. (Trial: apps are stopped overnight.) |
 | Pushes accepted, nothing in Splunk Observability Cloud | Wrong realm/token on the collector | Check `Exporting failed` in the collector logs |

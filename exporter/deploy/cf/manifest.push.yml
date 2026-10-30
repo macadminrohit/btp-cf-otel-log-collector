@@ -13,6 +13,10 @@
 #     otlp_push_token  : the Collector's OTLP ingest bearer token (its OTLP_INGEST_TOKEN)
 # The Collector must run with its metrics overlay (config.o11y-metrics.yaml).
 #
+# Lists (CF_ORG_NAMES, CF_SPACE_NAMES, CF_APP_NAMES) are comma separated. If a NAME contains a comma
+# (e.g. an org called "Acme Services, Inc._prod"), write the list as a JSON array in single quotes:
+#   CF_ORG_NAMES: '["Acme Services, Inc._prod"]'
+#
 # Edit for your landscape: CF_API_URL, CF_ORG_NAMES, CF_SPACE_NAMES, CF_APP_NAMES,
 # OTLP_PUSH_ENDPOINT, DEPLOYMENT_ENVIRONMENT. LOG_CACHE_URL is derived from CF_API_URL
 # (api.cf.<region>... -> log-cache.cf.<region>...); set it only if your landscape differs.
