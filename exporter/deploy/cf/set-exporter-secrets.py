@@ -51,13 +51,15 @@ def read_collector_token(app: str) -> str | None:
     return match.group(1) if match else None
 
 
-def build_secrets(mode: str, collector_app: str, prompt_token: bool) -> dict[str, str]:
+def build_secrets(mode: str, collector_app: str, prompt_token: bool, origin: str = "") -> dict[str, str]:
     secrets: dict[str, str] = {}
     if mode == "refresh_token":
         secrets["cf_refresh_token"] = read_refresh_token()
     else:
         secrets["cf_username"] = input("CF technical user name: ").strip()
         secrets["cf_password"] = getpass.getpass("CF technical user password: ")
+        if origin.strip():
+            secrets["cf_origin"] = origin.strip()
     ingest = None if prompt_token else read_collector_token(collector_app)
     if ingest:
         print(f"Using OTLP_INGEST_TOKEN read from app '{collector_app}' ({len(ingest)} characters).")
@@ -91,12 +93,13 @@ def store(secrets: dict[str, str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--mode", choices=["refresh_token", "password"], default="refresh_token")
+    parser.add_argument("--origin", default="", help="UAA origin (identity provider) of the technical user, like cf auth --origin")
     parser.add_argument("--collector-app", default="otel-log-collector")
     parser.add_argument("--prompt-token", action="store_true", help="type the ingest token instead")
     parser.add_argument("--dry-run", action="store_true", help="validate and list keys only")
     args = parser.parse_args()
 
-    secrets = build_secrets(args.mode, args.collector_app, args.prompt_token)
+    secrets = build_secrets(args.mode, args.collector_app, args.prompt_token, args.origin)
     if args.dry_run:
         print(f"Dry run. Would store keys in {SERVICE}: {', '.join(sorted(secrets))}")
         return

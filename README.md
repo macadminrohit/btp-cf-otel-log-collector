@@ -10,6 +10,10 @@ code change, no certificate to manage.
 
 **Start with [RUNBOOK.md](RUNBOOK.md).**
 
+**Container metrics (CPU, memory, disk) of your Cloud Foundry apps** go through the same collector to
+Splunk Observability Cloud: see [`exporter/README.md`](exporter/README.md) and
+[`RUNBOOK-cf-metrics.md`](RUNBOOK-cf-metrics.md).
+
 ```
 Java app (Splunk OTel agent) --OTLP/HTTP + bearer--> otel-log-collector (CF app) --HEC--> Splunk Cloud
 ```

@@ -32,6 +32,7 @@ CREDENTIAL_ENV_MAP: dict[str, str] = {
     "cf_bearer_token": "CF_BEARER_TOKEN",
     "cf_username": "CF_USERNAME",
     "cf_password": "CF_PASSWORD",
+    "cf_origin": "CF_ORIGIN",
     "cf_client_id": "CF_CLIENT_ID",
     "cf_client_secret": "CF_CLIENT_SECRET",
     "cf_refresh_token": "CF_REFRESH_TOKEN",

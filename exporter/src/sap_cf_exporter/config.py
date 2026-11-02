@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     cf_client_secret: SecretStr | None = None
     cf_username: str | None = None
     cf_password: SecretStr | None = None
+    # UAA origin (identity provider) of the technical user, for password mode with a custom IdP.
+    cf_origin: str | None = None
     cf_bearer_token: SecretStr | None = None
 
     # --- Where the container numbers come from ------------------------------------

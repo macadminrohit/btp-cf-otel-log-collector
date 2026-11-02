@@ -8,6 +8,7 @@
 #   cf create-user-provided-service sap-cf-exporter-secrets -p <file>   (keys below)
 #     One CF login credential, matching CF_AUTH_MODE below:
 #       password       -> cf_username + cf_password   (technical user; recommended for production)
+#                         + optional cf_origin (UAA origin of a custom IdP such as SAP IAS)
 #       refresh_token  -> cf_refresh_token            (SSO user without a password; see README)
 #       static_token   -> cf_bearer_token             (demo only: `cf oauth-token` lasts ~20 min)
 #     otlp_push_token  : the Collector's OTLP ingest bearer token (its OTLP_INGEST_TOKEN)

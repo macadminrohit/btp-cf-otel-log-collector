@@ -6,6 +6,7 @@
 .EXAMPLE
   .\set-exporter-secrets.ps1                      # SSO user: uses the refresh token of your `cf login --sso`
   .\set-exporter-secrets.ps1 -Mode password       # technical user: prompts for username and password
+  .\set-exporter-secrets.ps1 -Mode password -Origin <idp-origin>   # technical user from a custom IdP (SAP IAS)
   .\set-exporter-secrets.ps1 -DryRun              # check inputs and list the keys, change nothing
 
 .NOTES
@@ -22,6 +23,9 @@ param(
     # App whose OTLP_INGEST_TOKEN the exporter must present. Read straight from `cf env`, so nothing is
     # typed or pasted (a mistyped or truncated token causes "OTLP push rejected: HTTP 401").
     [string]$CollectorApp = "otel-log-collector",
+    # UAA origin (identity provider) of the technical user, same as `cf auth --origin`. Leave empty for the
+    # default. Needed when the user lives in a custom identity provider such as SAP IAS.
+    [string]$Origin = "",
     [switch]$PromptForToken,
     [switch]$DryRun
 )
@@ -76,6 +80,7 @@ if ($Mode -eq "refresh_token") {
 else {
     $secrets["cf_username"] = (Read-Host "CF technical user name").Trim()
     $secrets["cf_password"] = Read-Secret "CF technical user password"
+    if ($Origin) { $secrets["cf_origin"] = $Origin.Trim() }
 }
 $ingest = $null
 if (-not $PromptForToken) {
