@@ -103,7 +103,7 @@ PowerShell `cf unset-env $app OTEL_EXTRA_CONFIG; cf restart $app`.
 
 ## Part 2: deploy the exporter
 
-1. Create the secrets service with the helper (`.ps1` for PowerShell, `.py` for bash). It prompts (hidden) for the collector's `OTLP_INGEST_TOKEN`,
+1. Create the secrets service with the helper (`.ps1` for PowerShell, `.py` for bash). It reads the collector's `OTLP_INGEST_TOKEN` straight from `cf env otel-log-collector` (never shown, never typed or pasted; `-CollectorApp <name>` if yours is named differently, `-PromptForToken` to type it),
    stores everything in the `sap-cf-exporter-secrets` service through a temporary owner-only file that is
    deleted at once, and prints only the key names. Nothing lands in shell history or on screen.
    ```bash
@@ -161,9 +161,10 @@ Metrics sent (per instance, label `cf_instance_index`): `sap_cf_container_cpu_us
 | --- | --- | --- |
 | `static bearer token has expired` | Demo token (~20 min) | Switch to `refresh_token` (SSO) or `password` mode |
 | `refresh token is expired or revoked` | SSO session ended | `cf login --sso`, update `cf_refresh_token` in the service, `cf restart` |
-| `OTLP push rejected: HTTP 401` | Wrong `otlp_push_token` | Must equal the collector's `OTLP_INGEST_TOKEN` |
+| `OTLP push rejected: HTTP 401` | Wrong `otlp_push_token` (typed or pasted value differs) | Re-run the helper (it reads the token from the collector app), then `cf restage sap-cf-metrics-exporter`. To compare lengths without printing: stored value is in `cf env sap-cf-metrics-exporter` under `otlp_push_token` |
 | `OTLP push rejected: HTTP 404/405` | Wrong `OTLP_PUSH_ENDPOINT` | Use `https://<collector route>/v1/metrics` |
 | Timeouts / connection errors to the CF API, UAA or Log Cache | Egress blocked for the space | Allow those hosts in the space's application security group |
+| Log shows `Configured orgs not found/visible` and `Discovered 0 apps` | An org/space/app name contains a comma, so the list was split in two (e.g. `Acme Services, Inc._prod`) | Write that list as a JSON array in single quotes: `CF_ORG_NAMES: '["Acme Services, Inc._prod"]'`. Or leave `CF_ORG_NAMES` out (empty = every org you can see) and scope with `CF_SPACE_NAMES` and `CF_APP_NAMES` |
 | `HTTP 404` from Log Cache | Wrong `LOG_CACHE_URL` (landscape differs) | Set `LOG_CACHE_URL` explicitly |
 | `Cycle ok: 0/N` and an app shows no data | App stopped, or no gauges in the last 3 min | Start the app. (Trial: apps are stopped overnight.) |
 | Pushes accepted, nothing in Splunk Observability Cloud | Wrong realm/token on the collector | Check `Exporting failed` in the collector logs |

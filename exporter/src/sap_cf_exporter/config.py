@@ -6,6 +6,7 @@ The ``.env`` file must stay out of Git (see ``.gitignore``).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlparse
@@ -17,9 +18,23 @@ LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _split_csv(value: object) -> object:
+    """Parse a list setting: comma separated, or a JSON array when a name itself contains commas.
+
+    ``a,b`` -> ["a", "b"];  ``["Acme, Inc._prod", "b"]`` -> ["Acme, Inc._prod", "b"].
+    """
     if value is None:
         return []
     if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("["):
+            hint = 'expected a JSON array of strings, e.g. ["a, b", "c"]'
+            try:
+                parsed = json.loads(text)
+            except ValueError as exc:
+                raise ValueError(hint) from exc
+            if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+                raise ValueError(hint)
+            return [item.strip() for item in parsed if item.strip()]
         return [item.strip() for item in value.split(",") if item.strip()]
     return value
 
@@ -69,6 +84,8 @@ class Settings(BaseSettings):
     cf_client_secret: SecretStr | None = None
     cf_username: str | None = None
     cf_password: SecretStr | None = None
+    # UAA origin (identity provider) of the technical user, for password mode with a custom IdP.
+    cf_origin: str | None = None
     cf_bearer_token: SecretStr | None = None
 
     # --- Where the container numbers come from ------------------------------------

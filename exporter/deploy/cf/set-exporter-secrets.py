@@ -6,8 +6,9 @@ Works on macOS, Linux and Windows (needs Python 3 and the `cf` CLI, already logg
   python set-exporter-secrets.py --mode password  # technical user: prompts for username and password
   python set-exporter-secrets.py --dry-run        # show which keys would be stored, change nothing
 
-Both modes prompt (hidden) for the collector's OTLP ingest token, i.e. the value of the
-`OTLP_INGEST_TOKEN` env var of the otel-log-collector app.
+The collector's OTLP ingest token (the `OTLP_INGEST_TOKEN` env var of the otel-log-collector app) is
+read directly from `cf env` and never shown, so nothing is typed or pasted. Use `--collector-app NAME`
+for a differently named app, or `--prompt-token` to type it (hidden) instead.
 
 Secrets are written to a temporary owner-only file that is deleted straight away. Nothing is
 echoed, logged or passed on a command line.
@@ -19,6 +20,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -43,14 +45,29 @@ def read_refresh_token() -> str:
     return str(token)
 
 
-def build_secrets(mode: str) -> dict[str, str]:
+def read_collector_token(app: str) -> str | None:
+    result = subprocess.run(["cf", "env", app], capture_output=True, text=True, check=False)
+    match = re.search(r"^OTLP_INGEST_TOKEN:\s*(\S+)", result.stdout, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def build_secrets(mode: str, collector_app: str, prompt_token: bool, origin: str = "") -> dict[str, str]:
     secrets: dict[str, str] = {}
     if mode == "refresh_token":
         secrets["cf_refresh_token"] = read_refresh_token()
     else:
         secrets["cf_username"] = input("CF technical user name: ").strip()
         secrets["cf_password"] = getpass.getpass("CF technical user password: ")
-    secrets["otlp_push_token"] = getpass.getpass("Collector OTLP_INGEST_TOKEN: ")
+        if origin.strip():
+            secrets["cf_origin"] = origin.strip()
+    ingest = None if prompt_token else read_collector_token(collector_app)
+    if ingest:
+        print(f"Using OTLP_INGEST_TOKEN read from app '{collector_app}' ({len(ingest)} characters).")
+    else:
+        if not prompt_token:
+            print(f"Could not read OTLP_INGEST_TOKEN from app '{collector_app}'; asking for it instead.")
+        ingest = getpass.getpass("Collector OTLP_INGEST_TOKEN: ").strip()
+    secrets["otlp_push_token"] = ingest
     empty = [key for key, value in secrets.items() if not value]
     if empty:
         sys.exit(f"Missing value for: {', '.join(empty)}")
@@ -76,10 +93,13 @@ def store(secrets: dict[str, str]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--mode", choices=["refresh_token", "password"], default="refresh_token")
+    parser.add_argument("--origin", default="", help="UAA origin (identity provider) of the technical user, like cf auth --origin")
+    parser.add_argument("--collector-app", default="otel-log-collector")
+    parser.add_argument("--prompt-token", action="store_true", help="type the ingest token instead")
     parser.add_argument("--dry-run", action="store_true", help="validate and list keys only")
     args = parser.parse_args()
 
-    secrets = build_secrets(args.mode)
+    secrets = build_secrets(args.mode, args.collector_app, args.prompt_token, args.origin)
     if args.dry_run:
         print(f"Dry run. Would store keys in {SERVICE}: {', '.join(sorted(secrets))}")
         return

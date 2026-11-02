@@ -107,9 +107,15 @@ class PasswordGrant:
     password: str
     client_id: str = "cf"
     client_secret: str = ""
+    # Identity provider (UAA origin) of the user, e.g. a custom SAP IAS tenant. Empty means the
+    # default origin. Same as ``cf auth --origin``.
+    origin: str = ""
 
     def form(self) -> dict[str, str]:
-        return {"grant_type": "password", "username": self.username, "password": self.password}
+        form = {"grant_type": "password", "username": self.username, "password": self.password}
+        if self.origin:
+            form["login_hint"] = json.dumps({"origin": self.origin}, separators=(",", ":"))
+        return form
 
     @property
     def client_auth(self) -> tuple[str, str]:
@@ -302,6 +308,7 @@ def build_token_provider(settings: Settings, http: RetryingHTTP) -> TokenProvide
         grant = PasswordGrant(
             username=settings.cf_username,
             password=settings.cf_password.get_secret_value(),
+            origin=settings.cf_origin or "",
             client_id=settings.cf_client_id or "cf",
             client_secret=settings.cf_client_secret.get_secret_value()
             if settings.cf_client_secret

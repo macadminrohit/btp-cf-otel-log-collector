@@ -6,11 +6,13 @@
 .EXAMPLE
   .\set-exporter-secrets.ps1                      # SSO user: uses the refresh token of your `cf login --sso`
   .\set-exporter-secrets.ps1 -Mode password       # technical user: prompts for username and password
+  .\set-exporter-secrets.ps1 -Mode password -Origin <idp-origin>   # technical user from a custom IdP (SAP IAS)
   .\set-exporter-secrets.ps1 -DryRun              # check inputs and list the keys, change nothing
 
 .NOTES
-  Both modes prompt (hidden) for the collector's OTLP ingest token, i.e. the value of the
-  OTLP_INGEST_TOKEN env var of the otel-log-collector app.
+  The collector's OTLP ingest token (the OTLP_INGEST_TOKEN env var of the otel-log-collector app) is read
+  directly from `cf env` and never shown. Use -CollectorApp <name> if your collector app is named
+  differently, or -PromptForToken to type/paste it (hidden prompt) instead.
   Secrets go through a temporary file in your own temp folder that is deleted straight away.
   Nothing is echoed, logged or passed on a command line.
 #>
@@ -18,6 +20,13 @@
 param(
     [ValidateSet("refresh_token", "password")]
     [string]$Mode = "refresh_token",
+    # App whose OTLP_INGEST_TOKEN the exporter must present. Read straight from `cf env`, so nothing is
+    # typed or pasted (a mistyped or truncated token causes "OTLP push rejected: HTTP 401").
+    [string]$CollectorApp = "otel-log-collector",
+    # UAA origin (identity provider) of the technical user, same as `cf auth --origin`. Leave empty for the
+    # default. Needed when the user lives in a custom identity provider such as SAP IAS.
+    [string]$Origin = "",
+    [switch]$PromptForToken,
     [switch]$DryRun
 )
 
@@ -44,6 +53,16 @@ function Invoke-Cf {
     finally { $ErrorActionPreference = $previous }
 }
 
+function Get-CollectorToken([string]$App) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { $lines = & cf env $App 2>&1 | ForEach-Object { "$_" } }
+    finally { $ErrorActionPreference = $previous }
+    $hit = $lines | Select-String -Pattern '^OTLP_INGEST_TOKEN:\s*(\S+)' | Select-Object -First 1
+    if ($hit) { return $hit.Matches[0].Groups[1].Value }
+    return $null
+}
+
 $secrets = [ordered]@{}
 
 if ($Mode -eq "refresh_token") {
@@ -61,8 +80,20 @@ if ($Mode -eq "refresh_token") {
 else {
     $secrets["cf_username"] = (Read-Host "CF technical user name").Trim()
     $secrets["cf_password"] = Read-Secret "CF technical user password"
+    if ($Origin) { $secrets["cf_origin"] = $Origin.Trim() }
 }
-$secrets["otlp_push_token"] = Read-Secret "Collector OTLP_INGEST_TOKEN"
+$ingest = $null
+if (-not $PromptForToken) {
+    $ingest = Get-CollectorToken $CollectorApp
+    if ($ingest) {
+        Write-Host "Using OTLP_INGEST_TOKEN read from app '$CollectorApp' ($($ingest.Length) characters)."
+    }
+    else {
+        Write-Host "Could not read OTLP_INGEST_TOKEN from app '$CollectorApp'; asking for it instead."
+    }
+}
+if (-not $ingest) { $ingest = (Read-Secret "Collector OTLP_INGEST_TOKEN").Trim() }
+$secrets["otlp_push_token"] = $ingest
 
 $empty = @($secrets.Keys | Where-Object { -not $secrets[$_] })
 if ($empty.Count -gt 0) { throw "Missing value for: $($empty -join ', ')" }
