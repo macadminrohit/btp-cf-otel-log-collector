@@ -1,0 +1,273 @@
+# OPT-IN overlay: poll ONE SAP HANA Cloud database from this collector.
+#
+# The start command accepts a single extra file (OTEL_EXTRA_CONFIG). Point it at
+# this file instead of config.o11y-metrics.yaml. This file keeps the OTLP metrics
+# pipeline from that overlay and adds a separate metrics/hana pipeline, so
+# container metrics and logs are unchanged.
+#
+# The SQL Query receiver (driver hdb) is already inside otelcol-contrib 0.164.0.
+# It opens an outbound TLS connection to the HANA SQL endpoint. Nothing here is
+# a secret. Required environment (cf set-env):
+#   HANA_HOST                 SQL endpoint hostname, no scheme and no port
+#   HANA_DATABASE             database name shown on the instance
+#   HANA_USER                 database user
+#   HANA_PASSWORD             that user's password
+#   SPLUNK_O11Y_REALM         e.g. us1
+#   SPLUNK_O11Y_ACCESS_TOKEN  Observability Cloud ingest token
+#
+# Port is 443, the HANA Cloud SQL endpoint. TLSServerName is the same hostname,
+# so the driver verifies SAP's server certificate. Do not set
+# TLSInsecureSkipVerify.
+#
+# Statement text is not selected. M_EXPENSIVE_STATEMENTS.STATEMENT_STRING and
+# PARAMETERS stay on the database.
+#
+# Keep the app at one instance. A second instance would run these queries again.
+
+exporters:
+  otlp_http/splunk_o11y:
+    metrics_endpoint: https://ingest.${env:SPLUNK_O11Y_REALM}.observability.splunkcloud.com/v2/datapoint/otlp
+    headers:
+      X-SF-Token: ${env:SPLUNK_O11Y_ACCESS_TOKEN}
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+processors:
+  resource/hana:
+    attributes:
+      - key: service.name
+        value: sap-hana
+        action: upsert
+      - key: hana.database
+        value: ${env:HANA_DATABASE}
+        action: upsert
+
+receivers:
+  sql_query:
+    driver: hdb
+    # `database` is required by the receiver. The hdb URL builder does not put it
+    # in the connection string; databaseName below does.
+    host: ${env:HANA_HOST}
+    port: 443
+    database: ${env:HANA_DATABASE}
+    username: ${env:HANA_USER}
+    password: ${env:HANA_PASSWORD}
+    additional_params:
+      TLSServerName: ${env:HANA_HOST}
+      databaseName: ${env:HANA_DATABASE}
+      timeout: 30
+    collection_interval: 60s
+    timeout: 20s
+    max_open_conn: 2
+    telemetry:
+      logs:
+        query: false
+    queries:
+      # Host memory is a gauge. CPU times are cumulative milliseconds since
+      # host start (M_HOST_RESOURCE_UTILIZATION). Rate them in Splunk.
+      # PROCESS_CPU / TOTAL_CPU on M_SERVICE_STATISTICS are not selected: those
+      # percentages reset whenever any session reads the view.
+      - sql: >
+          SELECT HOST,
+                 USED_PHYSICAL_MEMORY,
+                 FREE_PHYSICAL_MEMORY,
+                 ALLOCATION_LIMIT,
+                 INSTANCE_TOTAL_MEMORY_USED_SIZE,
+                 INSTANCE_TOTAL_MEMORY_ALLOCATED_SIZE,
+                 TOTAL_CPU_USER_TIME,
+                 TOTAL_CPU_SYSTEM_TIME,
+                 TOTAL_CPU_IDLE_TIME
+          FROM SYS.M_HOST_RESOURCE_UTILIZATION
+        ignore_null_values: true
+        metrics:
+          - metric_name: hana.host.memory.used
+            value_column: USED_PHYSICAL_MEMORY
+            attribute_columns: [HOST]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.host.memory.free
+            value_column: FREE_PHYSICAL_MEMORY
+            attribute_columns: [HOST]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.host.memory.allocation_limit
+            value_column: ALLOCATION_LIMIT
+            attribute_columns: [HOST]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.host.memory.instance_used
+            value_column: INSTANCE_TOTAL_MEMORY_USED_SIZE
+            attribute_columns: [HOST]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.cpu.user_time
+            value_column: TOTAL_CPU_USER_TIME
+            attribute_columns: [HOST]
+            data_type: sum
+            aggregation: cumulative
+            monotonic: true
+            value_type: int
+            unit: ms
+          - metric_name: hana.cpu.system_time
+            value_column: TOTAL_CPU_SYSTEM_TIME
+            attribute_columns: [HOST]
+            data_type: sum
+            aggregation: cumulative
+            monotonic: true
+            value_type: int
+            unit: ms
+          - metric_name: hana.cpu.idle_time
+            value_column: TOTAL_CPU_IDLE_TIME
+            attribute_columns: [HOST]
+            data_type: sum
+            aggregation: cumulative
+            monotonic: true
+            value_type: int
+            unit: ms
+
+      # Filesystem capacity. On a managed HANA Cloud host this view can return
+      # no rows; database size below still comes from M_VOLUME_SIZES.
+      - sql: >
+          SELECT COALESCE(HOST, 'unknown') AS HOST,
+                 USAGE_TYPE,
+                 TOTAL_SIZE,
+                 USED_SIZE
+          FROM SYS.M_DISKS
+          WHERE USAGE_TYPE IN ('DATA', 'LOG', 'TRACE')
+        ignore_null_values: true
+        metrics:
+          - metric_name: hana.disk.total
+            value_column: TOTAL_SIZE
+            attribute_columns: [HOST, USAGE_TYPE]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.disk.used
+            value_column: USED_SIZE
+            attribute_columns: [HOST, USAGE_TYPE]
+            data_type: gauge
+            value_type: int
+            unit: By
+
+      # Persistence size of this database: data and log volumes.
+      - sql: >
+          SELECT VOLUME_ID,
+                 DATA_SIZE,
+                 DATA_USED_SIZE,
+                 LOG_SIZE,
+                 LOG_USED_SIZE
+          FROM SYS.M_VOLUME_SIZES
+        ignore_null_values: true
+        metrics:
+          - metric_name: hana.database.data_size
+            value_column: DATA_SIZE
+            attribute_columns: [VOLUME_ID]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.database.data_used
+            value_column: DATA_USED_SIZE
+            attribute_columns: [VOLUME_ID]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.database.log_size
+            value_column: LOG_SIZE
+            attribute_columns: [VOLUME_ID]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.database.log_used
+            value_column: LOG_USED_SIZE
+            attribute_columns: [VOLUME_ID]
+            data_type: gauge
+            value_type: int
+            unit: By
+
+      # One row per HANA service (indexserver and the rest).
+      - sql: >
+          SELECT HOST,
+                 PORT,
+                 SERVICE_NAME,
+                 CASE ACTIVE_STATUS WHEN 'YES' THEN 1 ELSE 0 END AS SERVICE_UP,
+                 PROCESS_CPU_TIME,
+                 PROCESS_MEMORY
+          FROM SYS.M_SERVICE_STATISTICS
+        ignore_null_values: true
+        metrics:
+          - metric_name: hana.service.up
+            value_column: SERVICE_UP
+            attribute_columns: [HOST, PORT, SERVICE_NAME]
+            data_type: gauge
+            value_type: int
+          - metric_name: hana.service.cpu_time
+            value_column: PROCESS_CPU_TIME
+            attribute_columns: [HOST, PORT, SERVICE_NAME]
+            data_type: sum
+            aggregation: cumulative
+            monotonic: true
+            value_type: int
+            unit: ms
+          - metric_name: hana.service.memory.used
+            value_column: PROCESS_MEMORY
+            attribute_columns: [HOST, PORT, SERVICE_NAME]
+            data_type: gauge
+            value_type: int
+            unit: By
+
+      - sql: >
+          SELECT HOST,
+                 PORT,
+                 SERVICE_NAME,
+                 TOTAL_MEMORY_USED_SIZE,
+                 EFFECTIVE_ALLOCATION_LIMIT
+          FROM SYS.M_SERVICE_MEMORY
+        ignore_null_values: true
+        metrics:
+          - metric_name: hana.service.memory.total_used
+            value_column: TOTAL_MEMORY_USED_SIZE
+            attribute_columns: [HOST, PORT, SERVICE_NAME]
+            data_type: gauge
+            value_type: int
+            unit: By
+          - metric_name: hana.service.memory.allocation_limit
+            value_column: EFFECTIVE_ALLOCATION_LIMIT
+            attribute_columns: [HOST, PORT, SERVICE_NAME]
+            data_type: gauge
+            value_type: int
+            unit: By
+
+      # Count only. The trace is off unless someone has enabled it, in which
+      # case this returns 0. Statement text is not selected.
+      - sql: >
+          SELECT COUNT(*) AS EXPENSIVE_COUNT
+          FROM SYS.M_EXPENSIVE_STATEMENTS
+          WHERE START_TIME > ADD_SECONDS(CURRENT_TIMESTAMP, -60)
+            AND OPERATION IN (
+              'AGGREGATED_EXECUTION', 'CALL', 'DELETE', 'INSERT', 'UPDATE',
+              'SELECT_FOR_UPDATE', 'EXECUTE_DML', 'EXECUTE_DDL', 'EXECUTE'
+            )
+        metrics:
+          - metric_name: hana.sql.expensive_statements
+            value_column: EXPENSIVE_COUNT
+            data_type: gauge
+            value_type: int
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/splunk_o11y]
+    metrics/hana:
+      receivers: [sql_query]
+      processors: [memory_limiter, resource/hana, batch]
+      exporters: [otlp_http/splunk_o11y]
