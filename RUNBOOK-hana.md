@@ -15,8 +15,8 @@ reach on port 443. Copy from the instance overview:
 
 | Env var | Where it comes from |
 |---|---|
-| `HANA_HOST` | SQL endpoint hostname only. No `https://`, no `:443` |
-| `HANA_DATABASE` | Database name on that instance |
+| `HANA_HOST` | SQL endpoint hostname only. The copied endpoint ends in `:443`; leave that off. This config connects on port 443. |
+| `HANA_DATABASE` | Instance name, stored only as a metric label. The SQL endpoint has no separate database name, and this value is not sent to HANA. |
 | `HANA_USER` | A database user that can read the system views. `DBADMIN` is only acceptable on a personal trial, not on a J&J database |
 | `HANA_PASSWORD` | That user's password |
 
