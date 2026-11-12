@@ -1,0 +1,86 @@
+# OPT-IN overlay: route Splunk Secure Application records to the security event API.
+#
+# Use case: an application running a Splunk language agent with the Secure Application
+# feature enabled emits its library inventory as OTLP LOG records whose instrumentation
+# scope is "secureapp". Those records must not go to the HEC log index — they go to
+# Observability Cloud's /v3/event endpoint with a marker header. Ordinary application
+# logs continue to HEC exactly as before.
+#
+# Merged on top of config.yaml by passing both files:
+#   ./otelcol-contrib --config=config.yaml --config=config.secureapp.yaml
+# On Cloud Foundry:
+#   cf set-env <collector> OTEL_EXTRA_CONFIG config.secureapp.yaml
+#
+# This overlay REPLACES the exporters on the base `logs` pipeline with the routing
+# connector, then re-creates the original HEC path as `logs/app`. Net effect when no
+# secureapp records arrive: identical to config.yaml alone.
+#
+# Required environment (cf set-env; never written to a file):
+#   SPLUNK_O11Y_REALM         e.g. us1
+#   SPLUNK_O11Y_ACCESS_TOKEN  org access token with ingest scope
+# Optional:
+#   (none)
+#
+# Endpoint note: Splunk serves this API at https://ingest.<realm>.signalfx.com/v3/event.
+# The newer ingest.<realm>.observability.splunkcloud.com hostname is used by the metrics
+# overlay. If /v3/event returns 404 on one host, try the other before assuming the
+# pipeline is wrong — the failure looks identical to a routing mistake.
+
+connectors:
+  # Splits the single incoming log stream in two. `default_pipelines` is what
+  # happens to everything that does NOT match, so ordinary application logs keep
+  # their existing route to HEC. error_mode: ignore means a record that cannot be
+  # evaluated falls through to the default rather than being dropped.
+  routing/logs:
+    default_pipelines: [logs/app]
+    error_mode: ignore
+    table:
+      - context: log
+        condition: instrumentation_scope.name == "secureapp"
+        pipelines: [logs/secureapp]
+
+exporters:
+  # Separate from the base `debug` on purpose. Both branches printing through
+  # the same exporter makes the output identical whichever way a record went,
+  # so a routing mistake is invisible. With its own component id, a record
+  # tagged otelcol.component.id=debug/secureapp can only have matched the table.
+  debug/secureapp:
+    verbosity: detailed
+
+  otlp_http/secureapp:
+    # Only the logs signal is configured; this exporter is never used for traces
+    # or metrics.
+    logs_endpoint: https://ingest.${env:SPLUNK_O11Y_REALM}.signalfx.com/v3/event
+    headers:
+      X-SF-Token: ${env:SPLUNK_O11Y_ACCESS_TOKEN}
+      # Without this header the records are accepted and then silently ignored:
+      # the endpoint uses it to decide which security pipeline to feed.
+      X-Splunk-Instrumentation-Library: secureapp
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  pipelines:
+    # Receives everything, then hands off to the connector instead of exporting.
+    # Processors stay here so both branches inherit the same memory limit,
+    # environment mirroring and batching.
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/defaults, batch]
+      exporters: [routing/logs]
+
+    # The original path, unchanged in behaviour.
+    logs/app:
+      receivers: [routing/logs]
+      exporters: [splunk_hec, debug]
+
+    # Secure Application records only.
+    logs/secureapp:
+      receivers: [routing/logs]
+      exporters: [otlp_http/secureapp, debug/secureapp]

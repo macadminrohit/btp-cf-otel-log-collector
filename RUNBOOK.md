@@ -340,6 +340,94 @@ $t = $null
 
 ---
 
+## 9a. Secure Application (vulnerability reports)
+
+An application running a Splunk language agent with Secure Application enabled
+emits its library inventory as OTLP **log records** whose instrumentation scope
+is `secureapp`. Those records must not go to the HEC index — they go to
+Observability Cloud's `/v3/event` endpoint. `config.secureapp.yaml` does that
+split. Without it the reports still arrive, and land in your log index as
+unreadable gzip+base64 blobs.
+
+Enable it in this order. The collector change comes first; otherwise the reports
+arrive before there is anything to route them.
+
+```powershell
+# 1. Observability Cloud realm and access token (ingest scope)
+.\set-secrets.ps1 -App otel-log-collector -WithO11y
+
+# 2. What is the collector running today? Keep any existing overlay.
+cf env otel-log-collector | Select-String -Pattern '^\s*OTEL_EXTRA_CONFIG:'
+
+# 3. Add the overlay. Comma-separated, applied left to right.
+cf set-env otel-log-collector OTEL_EXTRA_CONFIG "config.secureapp.yaml"
+#   ...or, keeping container metrics as well:
+# cf set-env otel-log-collector OTEL_EXTRA_CONFIG "config.o11y-metrics.yaml,config.secureapp.yaml"
+
+# 4. PUSH, not restart. See the warning below.
+cf push -f manifest.yml --vars-file vars-<target>.yml
+```
+
+**`cf set-env` plus `cf restart` is not enough here, and the failure is a
+crash loop.** A file cannot be added to an existing droplet, so a collector
+whose droplet predates `config.secureapp.yaml` exits immediately with
+`unable to read the file file:config.secureapp.yaml`. The collector is shared,
+so that is an outage rather than an inconvenience. Run `./fetch.ps1` first if
+`otelcol-contrib` is not already beside the manifest.
+
+Validate before pushing — this catches the mistake in seconds:
+
+```bash
+./otelcol-contrib validate --config=config.yaml --config=config.secureapp.yaml
+```
+
+Then on the application, which needs no code change if it already runs the
+Splunk agent:
+
+```powershell
+cf set-env <app> SPLUNK_SECUREAPP_AGENT_ENABLED true
+cf set-env <app> SPLUNK_AUTOMATIC_LOG_COLLECTION true
+cf set-env <app> OTEL_LOG_LEVEL info      # first run only; see below
+cf restage <app>
+```
+
+`SPLUNK_AUTOMATIC_LOG_COLLECTION` is a **separate** switch. Enabling Secure
+Application force-enables the logs pipeline, which is why the vulnerability
+reports flow, but the bunyan / pino / winston bridge is gated on this variable
+alone. With only the first flag set you get vulnerability reports and zero
+application logs.
+
+Verifying, in order:
+
+```powershell
+# the scan ran
+cf logs <app> --recent | Select-String -Pattern 'packages identified'
+
+# it reached the collector: 200, not 401 or 404
+cf logs otel-log-collector --recent | Select-String -Pattern 'POST /v1/logs'
+
+# it took the secureapp branch, not the HEC default
+cf logs otel-log-collector --recent | Select-String -Pattern 'debug/secureapp'
+```
+
+Notes that save time:
+
+- Without `OTEL_LOG_LEVEL`, the agent registers no diagnostic logger, so the
+  Secure Application messages and every export failure are silent. A working
+  deployment and a broken one look identical.
+- The agent logs `completed exporting SecureApp events to Splunk` even when the
+  collector rejects the batch with 401. It means a request was attempted.
+- `401` almost always means the Observability Cloud token and the collector's
+  `OTLP_INGEST_TOKEN` were swapped. `404` usually means the collector app is
+  stopped — the CF router returns 404 for a stopped app.
+- Only packages actually loaded at runtime are reported, so counts are lower
+  than a `package.json` scan. That is deliberate.
+- Secure Application must be entitled on the Observability Cloud org.
+
+Rollback: remove `config.secureapp.yaml` from `OTEL_EXTRA_CONFIG` and
+`cf restart otel-log-collector`. The base configuration is untouched by this
+overlay, and with the overlay absent the logs pipeline is exactly what it was.
+
 ## 10. Rollback
 
 Per app: `./wire-app.sh <ups-name> https://<route> --disable --apps "<app>"` sets
