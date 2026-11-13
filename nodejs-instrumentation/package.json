@@ -1,0 +1,18 @@
+{
+  "name": "splunk-nodejs-sample",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reference app with NO telemetry dependency, proving the Cloud Foundry buildpack injects instrumentation and Secure Application from outside the app. WARNING: lodash and minimist are pinned to known-vulnerable versions on purpose, so Secure Application has a real finding to report. Do not copy these pins into a real application.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4",
+    "lodash": "4.17.15",
+    "minimist": "1.2.0",
+    "pino": "^9"
+  }
+}

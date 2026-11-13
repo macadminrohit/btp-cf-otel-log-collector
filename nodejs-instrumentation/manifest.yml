@@ -1,0 +1,75 @@
+---
+#
+# A complete, working manifest for a Node.js app instrumented entirely from
+# outside the application. To adopt it, merge the `buildpacks`, `env` and
+# `services` blocks into your own manifest and copy `.profile` and
+# `splunk-binding.js` to your app root. To push this folder as a sample,
+# change `name` and `OTEL_SERVICE_NAME` below.
+#
+applications:
+  - name: splunk-nodejs-sample
+    memory: 512M
+    disk_quota: 1G
+    instances: 1
+
+    # cflinuxfs5, the ACTIVE stack on BTP. Worth noting against the Python
+    # buildpack, which hard-requires the already-deprecated cflinuxfs4.
+    stack: cflinuxfs5
+
+    # Order matters: the Splunk buildpack supplies, nodejs_buildpack finalizes.
+    # bin/detect exits 100 so it is never auto-selected, and bin/finalize fails
+    # with a message if it is listed last.
+    buildpacks:
+      - https://github.com/signalfx/splunk-otel-js/releases/download/v4.13.0/splunk-otel-js-cloudfoundry-4.13.0.zip
+      - nodejs_buildpack
+
+    # No `command:` override. The buildpack installs a profile.d script that
+    # prepends --require=.../splunk-otel/instrument.js to NODE_OPTIONS, so the
+    # app's own `npm start` is left alone. This is what avoids the
+    # MODULE_NOT_FOUND class of error from hand-written start commands.
+
+    env:
+      # Set this deliberately. Left unset, the agent falls back to the `name`
+      # field in package.json, which is rarely the name you want in APM.
+      OTEL_SERVICE_NAME: splunk-nodejs-sample
+
+      # Merged with `otel.resource.attributes` from the bound instance rather
+      # than replacing it, per key, so estate-wide values such as
+      # deployment.environment survive. On a collision the value here wins.
+      OTEL_RESOURCE_ATTRIBUTES: service.version=1.0.0
+
+      # The buildpack bundles @splunk/secureapp-agent but does NOT turn it on.
+      # Nothing in bin/supply or profile/splunk-otel.sh sets this, and
+      # lib/start.js:140 still defaults it to false. It has to be set here.
+      SPLUNK_SECUREAPP_AGENT_ENABLED: "true"
+
+      # Default is a 60s initial delay and a 24h rescan.
+      SPLUNK_SECUREAPP_DEPENDENCY_INITIAL_DELAY: "10"
+
+      # Two separate switches, easily confused. Enabling Secure Application
+      # force-enables the logs PIPELINE (lib/start.js:141), but the bunyan/pino/
+      # winston bridge is gated only on this variable
+      # (lib/instrumentations/logging.js:47 sets disableLogSending to its
+      # inverse, defaulting to false). Without it the app's own log records are
+      # never sent, even though the pipeline is up and secureapp reports flow.
+      SPLUNK_AUTOMATIC_LOG_COLLECTION: "true"
+
+      # Realm, access token, OTLP protocol, and the collector logs endpoint and
+      # bearer header all come from the bound splunk-o11y instance via
+      # .profile + splunk-binding.js. No credential is set here, so `cf env` on
+      # this app shows none.
+      #
+      # Metrics were switched off for the buildpack test to keep the signal
+      # under examination clean. Delete this line to send Node.js runtime
+      # metrics to the realm from the same binding.
+      OTEL_METRICS_EXPORTER: none
+
+      # Known conflict, called out by bin/supply with a warning: OPTIMIZE_MEMORY
+      # overwrites NODE_OPTIONS and silently removes the agent preload.
+      OPTIMIZE_MEMORY: "false"
+
+    # The Node.js buildpack does not read VCAP_SERVICES -- unlike the Java
+    # buildpack, there is no reference to it anywhere in the bundle. .profile
+    # and splunk-binding.js do that translation at launch.
+    services:
+      - splunk-o11y

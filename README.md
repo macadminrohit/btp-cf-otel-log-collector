@@ -14,6 +14,11 @@ code change, no certificate to manage.
 Splunk Observability Cloud: see [`exporter/README.md`](exporter/README.md) and
 [`RUNBOOK-cf-metrics.md`](RUNBOOK-cf-metrics.md).
 
+**Node.js apps** need one extra step that Java apps do not. The Java buildpack reads the
+bound service itself; the Node.js buildpack does not read `VCAP_SERVICES` at all, so a
+two-file shim maps the same binding onto the variables the Node agent reads. See
+[`nodejs-instrumentation/README.md`](nodejs-instrumentation/README.md).
+
 ```
 Java app (Splunk OTel agent) --OTLP/HTTP + bearer--> otel-log-collector (CF app) --HEC--> Splunk Cloud
 ```
@@ -27,12 +32,18 @@ Java app (Splunk OTel agent) --OTLP/HTTP + bearer--> otel-log-collector (CF app)
 | `set-secrets.sh` / `.ps1` | Prompt for HEC settings and set them on the app |
 | `wire-app.sh` / `.ps1` | Add the OTLP log settings to an app's service binding |
 | `smoke-test.sh` / `.ps1` | Send a test log and check authentication |
+| `nodejs-instrumentation/` | Instrumenting Node.js apps from the same service binding, plus a reference app |
 
 ## What `wire-app` does
 
 `wire-app.ps1` (Windows) and `wire-app.sh` (macOS/Linux) switch on log export for a Java
 app **without changing the app or its code**. They only edit one Cloud Foundry
 user-provided service and restage the app.
+
+The keys it writes are also what the Node.js shim reads, so running `wire-app` against a
+service shared with Node.js apps is safe and benefits both. The *restage* half does not
+carry over, though: a Node.js app picks the keys up only once it has `.profile` and
+`splunk-binding.js` in place. See [`nodejs-instrumentation/`](nodejs-instrumentation/).
 
 **How it works.** The Java apps are instrumented by the Cloud Foundry Java buildpack's
 Splunk OpenTelemetry framework. That framework reads the credentials of a bound
