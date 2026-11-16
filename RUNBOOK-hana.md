@@ -17,7 +17,7 @@ reach on port 443. Copy from the instance overview:
 |---|---|
 | `HANA_HOST` | SQL endpoint hostname only. No `https://`, no `:443` |
 | `HANA_DATABASE` | Database name on that instance |
-| `HANA_USER` | A database user that can read the system views. `DBADMIN` is only acceptable on a personal trial, not on a J&J database |
+| `HANA_USER` | A database user that can read the system views. `DBADMIN` is only acceptable on a personal trial, never on a production database |
 | `HANA_PASSWORD` | That user's password |
 
 Also the Observability Cloud values the metrics overlay already uses, if they

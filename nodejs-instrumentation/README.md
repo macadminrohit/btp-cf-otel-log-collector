@@ -104,7 +104,7 @@ Setting the same variables directly on each application with `cf set-env` works
 identically and needs none of §3. It is the better choice for one or two
 applications. Binding is what makes a token rotation a single
 `cf update-user-provided-service` rather than an edit to every application, and
-is the right model at J&J's scale.
+is the right model once you have more than a handful.
 
 ### Creating one, if you have none
 
@@ -437,8 +437,8 @@ wait — and filter APM to the `deployment.environment` value from
 
 ## 9. Node.js applications already instrumented in package.json
 
-This is the common case at J&J today, and for these applications **you do not
-need the buildpack at all**.
+This is a common starting point, and for these applications **you do not need
+the buildpack at all**.
 
 An app that already carries `@splunk/otel` in `package.json` and initialises it
 itself is already running the agent. What it is missing is configuration. Bind
