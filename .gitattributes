@@ -2,3 +2,12 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.ps1 text eol=crlf
+
+# Run on a Linux container, so they must keep LF whatever the checkout host is.
+# .profile has no extension and would otherwise pick up the Windows default:
+# Cloud Foundry sources it, and a CR at the end of every line makes it fail to
+# parse or quietly do nothing, with no error anywhere.
+.profile text eol=lf
+*.js text eol=lf
+*.py text eol=lf
+*.json text eol=lf

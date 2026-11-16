@@ -203,6 +203,19 @@ instances actually contain:
   collision the app's value wins, consistent with the rule below. A bare
   `service.namespace` credential key is honoured the same way.
 
+**Windows: `.profile` must keep Unix (LF) line endings.** It runs on a Linux
+container. Saved with Windows CRLF endings it either fails to parse or quietly
+does nothing, and there is no error in `cf logs` either way — it looks exactly
+like a binding that was never read. `.gitattributes` in this repo pins it to LF,
+so a normal `git clone` is safe. The risk is copy-pasting into Notepad. If you
+do that, use an editor that can save Unix endings (VS Code shows `CRLF`/`LF` in
+the status bar and lets you click to switch), and check it landed:
+
+```powershell
+# Prints True if the file still has Windows endings, which is wrong
+[IO.File]::ReadAllText(".profile") -match "`r`n"
+```
+
 Three properties of that file matter for review:
 
 - **Nothing is echoed.** The output is consumed by `eval`, so no credential
