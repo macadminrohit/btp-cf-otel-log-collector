@@ -9,7 +9,9 @@
 # It opens an outbound TLS connection to the HANA SQL endpoint. Nothing here is
 # a secret. Required environment (cf set-env):
 #   HANA_HOST                 SQL endpoint hostname, no scheme and no port
-#   HANA_DATABASE             database name shown on the instance
+#   HANA_DATABASE             metric label only. The instance name is fine.
+#                             Do not send it as databaseName. The SQL endpoint
+#                             is already bound to that instance.
 #   HANA_USER                 database user
 #   HANA_PASSWORD             that user's password
 #   SPLUNK_O11Y_REALM         e.g. us1
@@ -49,8 +51,10 @@ processors:
 receivers:
   sql_query:
     driver: hdb
-    # `database` is required by the receiver. The hdb URL builder does not put it
-    # in the connection string; databaseName below does.
+    # `database` is required by the receiver. The hdb URL builder does not put
+    # it in the connection string. Do not add databaseName: the HANA Cloud SQL
+    # endpoint is already bound to this instance, and sending the instance name
+    # returns "database '<name>' not connected".
     host: ${env:HANA_HOST}
     port: 443
     database: ${env:HANA_DATABASE}
@@ -58,7 +62,6 @@ receivers:
     password: ${env:HANA_PASSWORD}
     additional_params:
       TLSServerName: ${env:HANA_HOST}
-      databaseName: ${env:HANA_DATABASE}
       timeout: 30
     collection_interval: 60s
     timeout: 20s
