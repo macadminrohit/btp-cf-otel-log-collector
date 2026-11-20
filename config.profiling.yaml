@@ -1,0 +1,83 @@
+# OPT-IN overlay: send Splunk AlwaysOn Profiling data to Observability Cloud
+# instead of to the HEC log index.
+#
+# Use case: an application running a Splunk language agent with profiling enabled
+# emits CPU and memory profiles as OTLP LOG records whose instrumentation scope is
+# "otel.profiling" and whose body is a gzipped, base64-encoded pprof payload. They
+# arrive on the same /v1/logs endpoint as ordinary application logs and, left alone,
+# are indexed in Splunk Cloud under sourcetype otel.profiling -- searchable, and
+# useless, because the profiling UI never sees them.
+#
+# Merged on top of config.yaml by passing both files:
+#   ./otelcol-contrib --config=config.yaml --config=config.profiling.yaml
+# On Cloud Foundry, alongside the Secure Application overlay:
+#   cf set-env <collector> OTEL_EXTRA_CONFIG config.secureapp.yaml,config.profiling.yaml
+#
+# ORDER MATTERS, and so does which other overlays are loaded -- see below.
+#
+# Required environment (cf set-env; never written to a file):
+#   SPLUNK_O11Y_REALM         e.g. us0
+#   SPLUNK_O11Y_ACCESS_TOKEN  org access token with ingest scope
+# Both are already required by config.secureapp.yaml, so enabling profiling on a
+# collector that already routes Secure Application adds no new configuration.
+#
+# Application side (on the app, not here):
+#   SPLUNK_PROFILER_ENABLED=true
+#   SPLUNK_PROFILER_MEMORY_ENABLED=true        # optional, CPU-only without it
+#   SPLUNK_PROFILER_LOGS_ENDPOINT=https://<collector route>
+# The endpoint is the BASE url with no path -- the agent appends /v1/logs itself.
+# Unset, it falls back to OTEL_EXPORTER_OTLP_ENDPOINT and then to localhost:4318,
+# which does not exist on Cloud Foundry, so profiles are silently lost.
+#
+# WHY THERE IS NO ROUTING CONNECTOR HERE
+#
+# The obvious design, by analogy with config.secureapp.yaml, is a third row in the
+# routing table matching instrumentation_scope.name == "otel.profiling". Do not do
+# that. Collector config merging replaces sequences rather than appending to them,
+# so a second overlay declaring `table:` silently discards the secureapp row and
+# Secure Application data starts going to the log index. Instead this overlay uses
+# the splunk_hec exporter's own built-in split: the exporter already recognises
+# profiling records and the log_data_enabled / profiling_data_enabled pair decides
+# which half each instance handles. Two exporters on one pipeline, no connector.
+#
+# COMPOSITION
+#
+# This overlay sets the exporter list of the pipeline that carries splunk_hec. That
+# pipeline is named `logs/app` when config.secureapp.yaml is loaded and `logs` when
+# it is not, so the two cases need different overlays and this file covers the
+# former. Load it AFTER config.secureapp.yaml. Without that overlay, move the
+# `logs/app` block below to `logs` and drop the receivers line.
+
+exporters:
+  # Redefines only these two keys on the existing exporter; token, endpoint, index
+  # and the rest are inherited from config.yaml. Profiling records would otherwise
+  # be accepted here and written to the index.
+  splunk_hec:
+    log_data_enabled: true
+    profiling_data_enabled: false
+
+  # The mirror image, pointed at Observability Cloud. Note /v1/log, singular, and
+  # the signalfx.com host -- this is the ingest API, not a HEC endpoint, even
+  # though the splunk_hec exporter is what speaks to it.
+  splunk_hec/profiling:
+    token: ${env:SPLUNK_O11Y_ACCESS_TOKEN}
+    endpoint: https://ingest.${env:SPLUNK_O11Y_REALM}.signalfx.com/v1/log
+    log_data_enabled: false
+    profiling_data_enabled: true
+    tls:
+      insecure_skip_verify: false
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  pipelines:
+    # Receivers and processors are inherited; only the exporter list changes.
+    logs/app:
+      receivers: [routing/logs]
+      exporters: [splunk_hec, splunk_hec/profiling, debug]
