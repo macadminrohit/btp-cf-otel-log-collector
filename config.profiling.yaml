@@ -10,10 +10,12 @@
 #
 # Merged on top of config.yaml by passing both files:
 #   ./otelcol-contrib --config=config.yaml --config=config.profiling.yaml
-# On Cloud Foundry, alongside the Secure Application overlay:
+# On Cloud Foundry, on its own or alongside any other overlay, in any order:
 #   cf set-env <collector> OTEL_EXTRA_CONFIG config.secureapp.yaml,config.profiling.yaml
 #
-# ORDER MATTERS, and so does which other overlays are loaded -- see below.
+# The file must be in the droplet, so `cf push` the collector after adding it.
+# Setting OTEL_EXTRA_CONFIG alone makes the collector reference a file that is not
+# there and it will not start -- taking ordinary log delivery down with it.
 #
 # Required environment (cf set-env; never written to a file):
 #   SPLUNK_O11Y_REALM         e.g. us0
@@ -27,38 +29,45 @@
 #   SPLUNK_PROFILER_LOGS_ENDPOINT=https://<collector route>
 # The endpoint is the BASE url with no path -- the agent appends /v1/logs itself.
 # Unset, it falls back to OTEL_EXPORTER_OTLP_ENDPOINT and then to localhost:4318,
-# which does not exist on Cloud Foundry, so profiles are silently lost.
+# which does not exist on Cloud Foundry, so profiles are silently lost. The agent
+# sends Authorization from OTEL_EXPORTER_OTLP_LOGS_HEADERS, so an app already
+# wired for logs needs no extra credential.
 #
-# WHY THERE IS NO ROUTING CONNECTOR HERE
+# WHY THIS OVERLAY ONLY ADDS, AND NEVER REDEFINES
 #
-# The obvious design, by analogy with config.secureapp.yaml, is a third row in the
-# routing table matching instrumentation_scope.name == "otel.profiling". Do not do
-# that. Collector config merging replaces sequences rather than appending to them,
-# so a second overlay declaring `table:` silently discards the secureapp row and
-# Secure Application data starts going to the log index. Instead this overlay uses
-# the splunk_hec exporter's own built-in split: the exporter already recognises
-# profiling records and the log_data_enabled / profiling_data_enabled pair decides
-# which half each instance handles. Two exporters on one pipeline, no connector.
+# Two tempting designs are both wrong.
 #
-# COMPOSITION
+# A third row in the routing connector's table, by analogy with
+# config.secureapp.yaml, destroys that overlay: config merging REPLACES sequences
+# rather than appending to them, so whichever file is loaded last wins and the
+# secureapp row disappears without any error. Vulnerability data would quietly
+# start going to the log index.
 #
-# This overlay sets the exporter list of the pipeline that carries splunk_hec. That
-# pipeline is named `logs/app` when config.secureapp.yaml is loaded and `logs` when
-# it is not, so the two cases need different overlays and this file covers the
-# former. Load it AFTER config.secureapp.yaml. Without that overlay, move the
-# `logs/app` block below to `logs` and drop the receivers line.
+# Adding the exporter to the pipeline that already carries splunk_hec has the same
+# flaw in the other direction, and worse: that pipeline is named `logs/app` when
+# config.secureapp.yaml is loaded and `logs` when it is not, so the overlay would
+# depend on both the presence AND the load order of an unrelated file. Get it
+# wrong and the collector either refuses to start or drops profiles silently.
+#
+# So this file declares one NEW pipeline hanging off the existing otlp receiver and
+# touches nothing else. Every log record is handed to both paths, and each exporter
+# keeps only its own half: the splunk_hec pair below is a mutually exclusive filter
+# on the same stream, not a router. The cost is that processors run twice over the
+# log stream; the benefit is an overlay that cannot break anything it does not own.
 
 exporters:
   # Redefines only these two keys on the existing exporter; token, endpoint, index
-  # and the rest are inherited from config.yaml. Profiling records would otherwise
-  # be accepted here and written to the index.
+  # and the rest are inherited from config.yaml. Without this, profiles would be
+  # written to the log index as well as sent to Observability Cloud.
   splunk_hec:
     log_data_enabled: true
     profiling_data_enabled: false
 
   # The mirror image, pointed at Observability Cloud. Note /v1/log, singular, and
   # the signalfx.com host -- this is the ingest API, not a HEC endpoint, even
-  # though the splunk_hec exporter is what speaks to it.
+  # though the splunk_hec exporter is what speaks to it. log_data_enabled: false
+  # is what makes the shared pipeline safe: ordinary and secureapp records reach
+  # this exporter too, and are discarded here rather than sent to the wrong place.
   splunk_hec/profiling:
     token: ${env:SPLUNK_O11Y_ACCESS_TOKEN}
     endpoint: https://ingest.${env:SPLUNK_O11Y_REALM}.signalfx.com/v1/log
@@ -77,7 +86,10 @@ exporters:
 
 service:
   pipelines:
-    # Receivers and processors are inherited; only the exporter list changes.
-    logs/app:
-      receivers: [routing/logs]
-      exporters: [splunk_hec, splunk_hec/profiling, debug]
+    # A second consumer of the same receiver. Reuses the processors defined in
+    # config.yaml rather than declaring its own, so memory limits and the
+    # deployment.environment mirroring stay identical on both paths.
+    logs/profiling:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/defaults, batch]
+      exporters: [splunk_hec/profiling]
